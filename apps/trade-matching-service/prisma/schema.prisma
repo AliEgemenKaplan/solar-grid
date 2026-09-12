@@ -50,15 +50,20 @@ model TradeMatch {
   pricePerKwh       Float
   totalAmount       Float
   currency          String
-  status            TradeStatus @default(PROPOSED)
+  status            TradeStatus @default(PENDING_BILLING)
   billingTradeId    String?
+  /// The offer and request this trade reserved energy from. Needed to give
+  /// the energy back if billing rejects the trade outright.
+  offerId           String
+  requestId         String
   idempotencyKey    String      @unique
+  billingAttempts   Int         @default(0)
   correlationId     String
   failureReason     String?
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  @@index([status])
+  @@index([status, createdAt])
   @@map("trade_matches")
 }
 
@@ -77,7 +82,10 @@ enum RequestStatus {
 }
 
 enum TradeStatus {
-  PROPOSED
+  /// Energy is reserved on the offer and request, billing outcome unknown.
+  /// A trade may only leave this state once billing has given a definite
+  /// answer, which is what stops the same energy being billed twice.
+  PENDING_BILLING
   COMPLETED
   FAILED
 }

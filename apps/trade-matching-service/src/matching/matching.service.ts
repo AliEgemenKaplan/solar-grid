@@ -1,14 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingClient } from '../clients/pricing.client';
-import { BillingClient } from '../clients/billing.client';
-import { generateTradeId, generateIdempotencyKey, roundToDecimals } from '@solar-grid/shared-utils';
+import { BillingClient, BillingRejectedError } from '../clients/billing.client';
+import { generateTradeId, roundToDecimals } from '@solar-grid/shared-utils';
+import { ENERGY_EPSILON, PlannedTrade, planTrades } from './matching.planner';
+import type { Prisma, TradeMatch } from '../../generated/client';
 
 export interface MatchResult {
   matched: number;
   failed: number;
   skipped: number;
+  /** Reserved energy whose billing outcome is still unknown. */
+  pending: number;
+  /** Trades reserved by an earlier run and confirmed during this one. */
+  settled: number;
 }
+
+type BillingOutcome = 'completed' | 'failed' | 'pending';
+
+type TransactionClient = Prisma.TransactionClient;
+
+/**
+ * Any 64-bit number works as long as every matching run uses the same one.
+ * Postgres hands the lock to one transaction at a time, which is what keeps
+ * two concurrent runs from selling the same kilowatt hour.
+ */
+const MATCHING_LOCK_KEY = 4815162342;
+
+/** How many unconfirmed trades one run will try to settle. */
+const SETTLEMENT_BATCH_SIZE = 50;
+
+class ReservationConflict extends Error {}
 
 @Injectable()
 export class MatchingService {
@@ -20,144 +42,285 @@ export class MatchingService {
     private readonly billingClient: BillingClient,
   ) {}
 
+  /**
+   * Reserve, bill, then confirm.
+   *
+   * Energy is taken off the offer and the request before billing is called,
+   * in one transaction, so it cannot be sold twice while we wait for an
+   * answer. The trade carries an idempotency key derived from its own id, so
+   * a retry after a timeout is recognised by billing as the same trade rather
+   * than charged again.
+   */
   async runMatching(correlationId: string): Promise<MatchResult> {
-    const result: MatchResult = { matched: 0, failed: 0, skipped: 0 };
+    const result: MatchResult = { matched: 0, failed: 0, skipped: 0, pending: 0, settled: 0 };
 
-    // FIFO: oldest first
-    const openSellers = await this.prisma.sellOffer.findMany({
-      where: { status: { in: ['OPEN', 'PARTIALLY_MATCHED'] } },
-      orderBy: { createdAt: 'asc' },
-    });
+    // Trades left unconfirmed by an earlier run hold energy and owe a ledger
+    // entry, so they are retried before anything new is matched.
+    const settlement = await this.settlePendingTrades();
+    result.settled = settlement.settled;
+    result.failed += settlement.failed;
+    result.pending += settlement.stillPending;
 
-    const openBuyers = await this.prisma.buyRequest.findMany({
-      where: { status: { in: ['OPEN', 'PARTIALLY_MATCHED'] } },
-      orderBy: { createdAt: 'asc' },
-    });
+    const [offers, requests] = await Promise.all([
+      this.prisma.sellOffer.findMany({
+        where: { status: { in: ['OPEN', 'PARTIALLY_MATCHED'] } },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.buyRequest.findMany({
+        where: { status: { in: ['OPEN', 'PARTIALLY_MATCHED'] } },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
 
-    if (openSellers.length === 0 || openBuyers.length === 0) {
+    if (offers.length === 0 || requests.length === 0) {
       this.logger.log(
-        `No matching candidates: ${openSellers.length} sellers, ${openBuyers.length} buyers [cid=${correlationId}]`,
+        `No matching candidates: ${offers.length} sellers, ${requests.length} buyers [cid=${correlationId}]`,
       );
       return result;
     }
 
-    // Fetch current price once per matching run
-    let priceResponse;
+    const plan = planTrades(offers, requests);
+    result.skipped = plan.skippedSelfMatches;
+
+    if (plan.trades.length === 0) {
+      this.logger.log(`Nothing to match [cid=${correlationId}]`);
+      return result;
+    }
+
+    let price;
     try {
-      priceResponse = await this.pricingClient.getCurrentPrice(correlationId);
+      price = await this.pricingClient.getCurrentPrice(correlationId);
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `Failed to fetch price, aborting matching: ${reason} [cid=${correlationId}]`,
+        `Failed to fetch price, aborting matching: ${describe(err)} [cid=${correlationId}]`,
       );
       return result;
     }
 
-    // Mutable copies to track remaining kWh across iterations
-    const sellers = openSellers.map((s) => ({ ...s, availableKwh: s.availableKwh }));
-    const buyers = openBuyers.map((b) => ({ ...b, requestedKwh: b.requestedKwh }));
+    for (const planned of plan.trades) {
+      const match = await this.reserve(planned, price, correlationId);
+      if (!match) {
+        // Another run reserved this energy between planning and reserving.
+        this.logger.debug(
+          `Skipped trade, energy no longer available: offer=${planned.offerId} request=${planned.requestId} [cid=${correlationId}]`,
+        );
+        continue;
+      }
 
-    for (const seller of sellers) {
-      for (const buyer of buyers) {
-        if (seller.availableKwh <= 0) break; // seller exhausted
-        if (buyer.requestedKwh <= 0) continue; // buyer already fulfilled
+      const outcome = await this.billAndSettle(match);
+      if (outcome === 'completed') result.matched++;
+      else if (outcome === 'failed') result.failed++;
+      else result.pending++;
+    }
 
-        if (seller.householdId === buyer.householdId) {
-          result.skipped++;
-          continue;
+    this.logger.log(
+      `Matching complete: ${result.matched} matched, ${result.failed} failed, ${result.skipped} skipped, ${result.pending} awaiting billing, ${result.settled} settled [cid=${correlationId}]`,
+    );
+    return result;
+  }
+
+  /**
+   * Takes the energy out of the offer and the request and records the trade,
+   * all or nothing. Returns null when the energy has already gone, which is
+   * a normal outcome, not an error.
+   */
+  private async reserve(
+    planned: PlannedTrade,
+    price: { pricePerKwh: number; currency: string },
+    correlationId: string,
+  ): Promise<TradeMatch | null> {
+    const tradeId = generateTradeId();
+    const totalAmount = roundToDecimals(planned.energyKwh * price.pricePerKwh, 2);
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // Serialises reservations across every instance and every trigger,
+        // and is released when this transaction ends. No HTTP call happens
+        // while it is held.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${MATCHING_LOCK_KEY}::bigint)`;
+
+        // The amount check belongs in the UPDATE itself: Postgres re-evaluates
+        // it against the committed row, so a competing transaction cannot slip
+        // between a read and a write.
+        const offerUpdate = await tx.sellOffer.updateMany({
+          where: { id: planned.offerId, availableKwh: { gte: planned.energyKwh } },
+          data: { availableKwh: { decrement: planned.energyKwh } },
+        });
+        if (offerUpdate.count === 0) return null;
+
+        const requestUpdate = await tx.buyRequest.updateMany({
+          where: { id: planned.requestId, requestedKwh: { gte: planned.energyKwh } },
+          data: { requestedKwh: { decrement: planned.energyKwh } },
+        });
+        if (requestUpdate.count === 0) {
+          // Give the reserved energy back by rolling the whole thing back.
+          throw new ReservationConflict();
         }
 
-        const tradeKwh = Math.min(seller.availableKwh, buyer.requestedKwh);
-        const totalAmount = roundToDecimals(tradeKwh * priceResponse.pricePerKwh, 2);
-        const tradeId = generateTradeId();
-        const idempotencyKey = generateIdempotencyKey(
-          'match',
-          seller.id,
-          buyer.id,
-          String(Date.now()),
-        );
+        await this.syncOfferStatus(tx, planned.offerId);
+        await this.syncRequestStatus(tx, planned.requestId);
 
-        // Create PROPOSED trade match
-        const tradeMatch = await this.prisma.tradeMatch.create({
+        const match = await tx.tradeMatch.create({
           data: {
             tradeId,
-            sellerHouseholdId: seller.householdId,
-            buyerHouseholdId: buyer.householdId,
-            energyKwh: tradeKwh,
-            pricePerKwh: priceResponse.pricePerKwh,
+            sellerHouseholdId: planned.sellerHouseholdId,
+            buyerHouseholdId: planned.buyerHouseholdId,
+            energyKwh: planned.energyKwh,
+            pricePerKwh: price.pricePerKwh,
             totalAmount,
-            currency: priceResponse.currency,
-            status: 'PROPOSED',
-            idempotencyKey,
+            currency: price.currency,
+            status: 'PENDING_BILLING',
+            offerId: planned.offerId,
+            requestId: planned.requestId,
+            // Derived from the trade and never regenerated, so every attempt
+            // to bill this trade carries the same key.
+            idempotencyKey: tradeId,
             correlationId,
           },
         });
 
         this.logger.log(
-          `Proposed trade: seller=${seller.householdId} buyer=${buyer.householdId} kwh=${tradeKwh} price=${priceResponse.pricePerKwh} total=${totalAmount} [cid=${correlationId}]`,
+          `Reserved trade: ${tradeId} seller=${planned.sellerHouseholdId} buyer=${planned.buyerHouseholdId} kwh=${planned.energyKwh} total=${totalAmount} ${price.currency} [cid=${correlationId}]`,
         );
+        return match;
+      });
+    } catch (err) {
+      if (err instanceof ReservationConflict) return null;
+      throw err;
+    }
+  }
 
-        try {
-          await this.billingClient.createTrade({
-            tradeId,
-            sellerHouseholdId: seller.householdId,
-            buyerHouseholdId: buyer.householdId,
-            energyKwh: tradeKwh,
-            pricePerKwh: priceResponse.pricePerKwh,
-            totalAmount,
-            currency: priceResponse.currency,
-            idempotencyKey,
-            correlationId,
-            completedAt: new Date().toISOString(),
-          });
+  /** Calls billing for a reserved trade and records what came back. */
+  private async billAndSettle(match: TradeMatch): Promise<BillingOutcome> {
+    await this.prisma.tradeMatch.update({
+      where: { id: match.id },
+      data: { billingAttempts: { increment: 1 } },
+    });
 
-          await this.prisma.tradeMatch.update({
-            where: { id: tradeMatch.id },
-            data: { status: 'COMPLETED' },
-          });
+    try {
+      const response = await this.billingClient.createTrade({
+        tradeId: match.tradeId,
+        sellerHouseholdId: match.sellerHouseholdId,
+        buyerHouseholdId: match.buyerHouseholdId,
+        energyKwh: match.energyKwh,
+        pricePerKwh: match.pricePerKwh,
+        totalAmount: match.totalAmount,
+        currency: match.currency,
+        idempotencyKey: match.idempotencyKey,
+        correlationId: match.correlationId,
+        // The reservation time, not "now": a retry has to send the same
+        // payload it sent the first time.
+        completedAt: match.createdAt.toISOString(),
+      });
 
-          // Update seller remaining kWh
-          const newSellerKwh = seller.availableKwh - tradeKwh;
-          seller.availableKwh = newSellerKwh;
-          await this.prisma.sellOffer.update({
-            where: { id: seller.id },
-            data: {
-              availableKwh: newSellerKwh,
-              status: newSellerKwh <= 0 ? 'MATCHED' : 'PARTIALLY_MATCHED',
-            },
-          });
+      await this.prisma.tradeMatch.update({
+        where: { id: match.id },
+        data: {
+          status: 'COMPLETED',
+          billingTradeId: response.tradeId ?? match.tradeId,
+          failureReason: null,
+        },
+      });
 
-          // Update buyer remaining kWh
-          const newBuyerKwh = buyer.requestedKwh - tradeKwh;
-          buyer.requestedKwh = newBuyerKwh;
-          await this.prisma.buyRequest.update({
-            where: { id: buyer.id },
-            data: {
-              requestedKwh: newBuyerKwh,
-              status: newBuyerKwh <= 0 ? 'MATCHED' : 'PARTIALLY_MATCHED',
-            },
-          });
+      const recognised = response.duplicate ? ' (billing had already recorded it)' : '';
+      this.logger.log(
+        `Trade COMPLETED: ${match.tradeId} kwh=${match.energyKwh} total=${match.totalAmount} ${match.currency}${recognised} [cid=${match.correlationId}]`,
+      );
+      return 'completed';
+    } catch (err) {
+      const reason = describe(err);
 
-          result.matched++;
-          this.logger.log(
-            `Trade COMPLETED: ${tradeId} seller=${seller.householdId}(${newSellerKwh}kWh left) buyer=${buyer.householdId}(${newBuyerKwh}kWh left) [cid=${correlationId}]`,
-          );
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          await this.prisma.tradeMatch.update({
-            where: { id: tradeMatch.id },
-            data: { status: 'FAILED', failureReason: reason },
-          });
-          result.failed++;
-          this.logger.error(`Trade FAILED: ${tradeId} reason=${reason} [cid=${correlationId}]`);
-        }
+      if (err instanceof BillingRejectedError) {
+        await this.releaseReservation(match, reason);
+        this.logger.error(
+          `Trade REJECTED by billing, energy released: ${match.tradeId} reason=${reason} [cid=${match.correlationId}]`,
+        );
+        return 'failed';
+      }
+
+      // Unknown outcome. The energy stays reserved and the trade keeps its
+      // idempotency key so the next run can ask billing again safely.
+      await this.prisma.tradeMatch.update({
+        where: { id: match.id },
+        data: { failureReason: reason },
+      });
+      this.logger.warn(
+        `Trade billing outcome unknown, staying reserved for retry: ${match.tradeId} reason=${reason} [cid=${match.correlationId}]`,
+      );
+      return 'pending';
+    }
+  }
+
+  /** Retries trades that were reserved but never got an answer from billing. */
+  private async settlePendingTrades(): Promise<{
+    settled: number;
+    failed: number;
+    stillPending: number;
+  }> {
+    const pending = await this.prisma.tradeMatch.findMany({
+      where: { status: 'PENDING_BILLING' },
+      orderBy: { createdAt: 'asc' },
+      take: SETTLEMENT_BATCH_SIZE,
+    });
+
+    let settled = 0;
+    let failed = 0;
+
+    for (let index = 0; index < pending.length; index++) {
+      const outcome = await this.billAndSettle(pending[index]);
+      if (outcome === 'completed') {
+        settled++;
+      } else if (outcome === 'failed') {
+        failed++;
+      } else {
+        // Billing is still not answering; leave the rest for the next run
+        // instead of repeating the same failure for every trade.
+        return { settled, failed, stillPending: pending.length - index };
       }
     }
 
-    this.logger.log(
-      `Matching complete: ${result.matched} matched, ${result.failed} failed, ${result.skipped} skipped [cid=${correlationId}]`,
-    );
-    return result;
+    if (settled > 0 || failed > 0) {
+      this.logger.log(
+        `Settled ${settled} and released ${failed} trade(s) left over from earlier runs`,
+      );
+    }
+    return { settled, failed, stillPending: 0 };
+  }
+
+  /** Gives reserved energy back after billing refused the trade outright. */
+  private async releaseReservation(match: TradeMatch, reason: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.sellOffer.update({
+        where: { id: match.offerId },
+        data: { availableKwh: { increment: match.energyKwh } },
+      });
+      await tx.buyRequest.update({
+        where: { id: match.requestId },
+        data: { requestedKwh: { increment: match.energyKwh } },
+      });
+      await this.syncOfferStatus(tx, match.offerId);
+      await this.syncRequestStatus(tx, match.requestId);
+      await tx.tradeMatch.update({
+        where: { id: match.id },
+        data: { status: 'FAILED', failureReason: reason },
+      });
+    });
+  }
+
+  private async syncOfferStatus(tx: TransactionClient, offerId: string): Promise<void> {
+    const offer = await tx.sellOffer.findUniqueOrThrow({ where: { id: offerId } });
+    const status = statusFor(offer.availableKwh, offer.originalKwh);
+    if (offer.status !== status) {
+      await tx.sellOffer.update({ where: { id: offerId }, data: { status } });
+    }
+  }
+
+  private async syncRequestStatus(tx: TransactionClient, requestId: string): Promise<void> {
+    const request = await tx.buyRequest.findUniqueOrThrow({ where: { id: requestId } });
+    const status = statusFor(request.requestedKwh, request.originalKwh);
+    if (request.status !== status) {
+      await tx.buyRequest.update({ where: { id: requestId }, data: { status } });
+    }
   }
 
   async getMatches() {
@@ -167,4 +330,18 @@ export class MatchingService {
   async getMatchByTradeId(tradeId: string) {
     return this.prisma.tradeMatch.findUnique({ where: { tradeId } });
   }
+}
+
+/** OPEN, PARTIALLY_MATCHED and MATCHED are just views of how much is left. */
+function statusFor(
+  remainingKwh: number,
+  originalKwh: number,
+): 'OPEN' | 'PARTIALLY_MATCHED' | 'MATCHED' {
+  if (remainingKwh <= ENERGY_EPSILON) return 'MATCHED';
+  if (remainingKwh >= originalKwh - ENERGY_EPSILON) return 'OPEN';
+  return 'PARTIALLY_MATCHED';
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
