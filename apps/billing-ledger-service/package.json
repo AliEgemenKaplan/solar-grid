@@ -7,6 +7,7 @@
     "start": "node dist/main",
     "start:dev": "nest start --watch",
     "test": "jest",
+    "test:integration": "jest --testRegex \".*\\.integration\\.spec\\.ts$\" --testPathIgnorePatterns \"/node_modules/\" --runInBand",
     "test:cov": "jest --coverage",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
@@ -53,7 +54,11 @@
     "moduleNameMapper": {
       "^@solar-grid/shared-contracts(.*)$": "<rootDir>/../../packages/shared-contracts/src$1",
       "^@solar-grid/shared-utils(.*)$": "<rootDir>/../../packages/shared-utils/src$1"
-    }
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "\\.integration\\.spec\\.ts$"
+    ]
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
