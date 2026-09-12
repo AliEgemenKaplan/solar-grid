@@ -19,6 +19,7 @@ model MeterReading {
   timestamp      DateTime
   createdAt      DateTime     @default(now())
 
+  @@unique([householdId, timestamp])
   @@index([householdId])
   @@map("meter_readings")
 }
@@ -32,6 +33,31 @@ model HouseholdEnergyStatus {
   updatedAt         DateTime     @updatedAt
 
   @@map("household_energy_status")
+}
+
+/// Transactional outbox. An event is written in the same transaction as the
+/// reading that caused it, so the two can never disagree: if the reading is
+/// stored the event exists, and a publisher moves it to the broker afterwards.
+model OutboxEvent {
+  id            String       @id @default(cuid())
+  eventId       String       @unique
+  eventType     String
+  routingKey    String
+  payload       Json
+  correlationId String
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  lastError     String?
+  createdAt     DateTime     @default(now())
+  publishedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
 }
 
 enum EnergyStatus {
