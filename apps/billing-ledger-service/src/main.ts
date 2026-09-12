@@ -23,7 +23,9 @@ async function bootstrap() {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Billing & Ledger Service')
-    .setDescription('Records completed trades, manages immutable ledger entries and household balances.')
+    .setDescription(
+      'Records completed trades, manages immutable ledger entries and household balances.',
+    )
     .setVersion('1.0')
     .addTag('Trades')
     .addTag('Balances')

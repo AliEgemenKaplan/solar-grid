@@ -23,7 +23,9 @@ async function bootstrap() {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Trade Matching Service')
-    .setDescription('Consumes energy events, matches buyers with sellers, and records completed trades.')
+    .setDescription(
+      'Consumes energy events, matches buyers with sellers, and records completed trades.',
+    )
     .setVersion('1.0')
     .addTag('Matching')
     .addTag('Offers')

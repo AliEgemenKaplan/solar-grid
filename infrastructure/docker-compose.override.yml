@@ -26,41 +26,41 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     ports: !override
-      - "5682:5672"
-      - "15682:15672"
+      - '5682:5672'
+      - '15682:15672'
 
   postgres-smart-meter:
     image: postgres:15
     ports: !override
-      - "5443:5432"
+      - '5443:5432'
 
   postgres-pricing:
     image: postgres:15
     ports: !override
-      - "5444:5432"
+      - '5444:5432'
 
   postgres-matching:
     image: postgres:15
     ports: !override
-      - "5445:5432"
+      - '5445:5432'
 
   postgres-ledger:
     image: postgres:15
     ports: !override
-      - "5446:5432"
+      - '5446:5432'
 
   smart-meter-service:
     ports: !override
-      - "13001:3001"
+      - '13001:3001'
 
   pricing-engine-service:
     ports: !override
-      - "13002:3002"
+      - '13002:3002'
 
   trade-matching-service:
     ports: !override
-      - "13003:3003"
+      - '13003:3003'
 
   billing-ledger-service:
     ports: !override
-      - "13004:3004"
+      - '13004:3004'

@@ -4,17 +4,17 @@
 
 ### Exchanges
 
-| Name | Type | Durable |
-| --- | --- | --- |
-| `solar-grid.energy` | topic | yes |
-| `solar-grid.energy.dlx` | topic | yes |
+| Name                    | Type  | Durable |
+| ----------------------- | ----- | ------- |
+| `solar-grid.energy`     | topic | yes     |
+| `solar-grid.energy.dlx` | topic | yes     |
 
 ### Queues
 
-| Queue | Bound Exchange | Routing Key | Purpose |
-| --- | --- | --- | --- |
-| `trade-matching.energy.queue` | `solar-grid.energy` | `energy.surplus.detected`, `energy.demand.detected` | Main consumer queue for matching |
-| `trade-matching.energy.dlq` | `solar-grid.energy.dlx` | `dlq.energy` | Failed event parking queue |
+| Queue                         | Bound Exchange          | Routing Key                                         | Purpose                          |
+| ----------------------------- | ----------------------- | --------------------------------------------------- | -------------------------------- |
+| `trade-matching.energy.queue` | `solar-grid.energy`     | `energy.surplus.detected`, `energy.demand.detected` | Main consumer queue for matching |
+| `trade-matching.energy.dlq`   | `solar-grid.energy.dlx` | `dlq.energy`                                        | Failed event parking queue       |
 
 The main queue dead-letters failed messages to `solar-grid.energy.dlx` with routing key `dlq.energy`.
 
@@ -22,10 +22,10 @@ No separate retry queue is implemented. Failed messages go to the DLQ for inspec
 
 ## Routing Keys
 
-| Key | Published By | Description |
-| --- | --- | --- |
+| Key                       | Published By        | Description                                      |
+| ------------------------- | ------------------- | ------------------------------------------------ |
 | `energy.surplus.detected` | smart-meter-service | Household production is greater than consumption |
-| `energy.demand.detected` | smart-meter-service | Household consumption is greater than production |
+| `energy.demand.detected`  | smart-meter-service | Household consumption is greater than production |
 
 ## End-to-End Flow
 

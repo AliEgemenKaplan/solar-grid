@@ -33,7 +33,10 @@ export class CreateTradeDto {
   @IsString()
   currency: string;
 
-  @ApiProperty({ example: 'match-uuid-001', description: 'Unique key to prevent duplicate ledger entries' })
+  @ApiProperty({
+    example: 'match-uuid-001',
+    description: 'Unique key to prevent duplicate ledger entries',
+  })
   @IsString()
   idempotencyKey: string;
 

@@ -6,7 +6,11 @@ import { getOrGenerateCorrelationId } from '@solar-grid/shared-utils';
 import { HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
 
 @ApiTags('Readings')
-@ApiHeader({ name: HEADER_CORRELATION_ID, required: false, description: 'Correlation ID for tracing' })
+@ApiHeader({
+  name: HEADER_CORRELATION_ID,
+  required: false,
+  description: 'Correlation ID for tracing',
+})
 @Controller('readings')
 export class ReadingsController {
   private readonly logger = new Logger(ReadingsController.name);

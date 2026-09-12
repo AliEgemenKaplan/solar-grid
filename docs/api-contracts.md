@@ -8,9 +8,11 @@ Swagger UI is available at `http://localhost:<port>/api` for each service.
 ## smart-meter-service (port 3001)
 
 ### POST /readings
+
 Submit a smart meter reading.
 
 **Request:**
+
 ```json
 {
   "householdId": "HH-001",
@@ -21,6 +23,7 @@ Submit a smart meter reading.
 ```
 
 **Response (201):**
+
 ```json
 {
   "id": "clxxxxx",
@@ -37,12 +40,15 @@ Submit a smart meter reading.
 ```
 
 ### GET /readings/:householdId
+
 Returns last 100 readings for a household, newest first.
 
 ### GET /households/:householdId/status
+
 Returns the current energy status.
 
 **Response (200):**
+
 ```json
 {
   "id": "clxxxxx",
@@ -55,6 +61,7 @@ Returns the current energy status.
 ```
 
 ### GET /health
+
 ```json
 { "status": "ok", "service": "smart-meter-service", "timestamp": "..." }
 ```
@@ -64,6 +71,7 @@ Returns the current energy status.
 ## pricing-engine-service (port 3002)
 
 ### GET /prices/current
+
 ```json
 {
   "pricePerKwh": 3.2,
@@ -75,19 +83,24 @@ Returns the current energy status.
 ```
 
 ### POST /prices/recalculate
+
 **Request:**
+
 ```json
 {
   "totalSupplyKwh": 50,
   "totalDemandKwh": 40
 }
 ```
+
 **Response (201):** Same shape as `GET /prices/current`.
 
 ### GET /prices/history?limit=50
+
 Returns array of price snapshots, newest first.
 
 ### GET /health
+
 ```json
 { "status": "ok", "service": "pricing-engine-service", "timestamp": "..." }
 ```
@@ -97,9 +110,11 @@ Returns array of price snapshots, newest first.
 ## billing-ledger-service (port 3004)
 
 ### POST /trades
+
 Record a completed trade (idempotent via `idempotencyKey`).
 
 **Request:**
+
 ```json
 {
   "tradeId": "TRD-001",
@@ -116,6 +131,7 @@ Record a completed trade (idempotent via `idempotencyKey`).
 ```
 
 **Response (201):**
+
 ```json
 {
   "id": "clxxxxx",
@@ -124,15 +140,21 @@ Record a completed trade (idempotent via `idempotencyKey`).
   "duplicate": false
 }
 ```
+
 If the `idempotencyKey` already exists: response includes `"duplicate": true` and returns the original trade — no new ledger entries are created.
 
 ### GET /trades/:tradeId
+
 ### GET /trades/household/:householdId
+
 ### GET /balances/:householdId
+
 ```json
 { "householdId": "HH-SELLER-001", "balance": 19, "currency": "TRY", "updatedAt": "..." }
 ```
+
 ### GET /ledger/:householdId
+
 Returns immutable ledger entries (CREDIT/DEBIT), newest first.
 
 ### GET /health
@@ -142,20 +164,26 @@ Returns immutable ledger entries (CREDIT/DEBIT), newest first.
 ## trade-matching-service (port 3003)
 
 ### GET /offers
+
 All sell offers with status.
 
 ### GET /requests
+
 All buy requests with status.
 
 ### GET /matches
+
 All trade matches.
 
 ### GET /matches/:tradeId
+
 Single trade match by trade ID.
 
 ### POST /matching/run
+
 Manually trigger FIFO matching.
 **Response (201):**
+
 ```json
 { "matched": 1, "failed": 0, "skipped": 0 }
 ```

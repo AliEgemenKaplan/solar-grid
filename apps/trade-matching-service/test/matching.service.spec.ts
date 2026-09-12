@@ -22,7 +22,13 @@ const mockBuyRequest = (id: string, householdId: string, requestedKwh: number) =
   updatedAt: new Date(),
 });
 
-const mockPrice = { pricePerKwh: 4.0, currency: 'TRY', calculatedAt: new Date().toISOString(), supplyKwh: 50, demandKwh: 40 };
+const mockPrice = {
+  pricePerKwh: 4.0,
+  currency: 'TRY',
+  calculatedAt: new Date().toISOString(),
+  supplyKwh: 50,
+  demandKwh: 40,
+};
 
 function buildMocks() {
   const matchCreate = jest.fn().mockResolvedValue({ id: 'match-001', tradeId: 'TRD-001' });
@@ -48,10 +54,21 @@ function buildMocks() {
   };
 
   const mockPricingClient: any = { getCurrentPrice: jest.fn().mockResolvedValue(mockPrice) };
-  const mockBillingClient: any = { createTrade: jest.fn().mockResolvedValue({ tradeId: 'TRD-001', duplicate: false }) };
+  const mockBillingClient: any = {
+    createTrade: jest.fn().mockResolvedValue({ tradeId: 'TRD-001', duplicate: false }),
+  };
 
   const service = new MatchingService(mockPrisma, mockPricingClient, mockBillingClient);
-  return { service, mockPrisma, mockPricingClient, mockBillingClient, matchCreate, matchUpdate, offerUpdate, requestUpdate };
+  return {
+    service,
+    mockPrisma,
+    mockPricingClient,
+    mockBillingClient,
+    matchCreate,
+    matchUpdate,
+    offerUpdate,
+    requestUpdate,
+  };
 }
 
 describe('MatchingService.runMatching - FIFO matching', () => {
@@ -66,10 +83,16 @@ describe('MatchingService.runMatching - FIFO matching', () => {
     expect(result.matched).toBe(1);
     expect(result.failed).toBe(0);
     expect(offerUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 's1' }, data: expect.objectContaining({ status: 'MATCHED', availableKwh: 0 }) }),
+      expect.objectContaining({
+        where: { id: 's1' },
+        data: expect.objectContaining({ status: 'MATCHED', availableKwh: 0 }),
+      }),
     );
     expect(requestUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'b1' }, data: expect.objectContaining({ status: 'MATCHED', requestedKwh: 0 }) }),
+      expect.objectContaining({
+        where: { id: 'b1' },
+        data: expect.objectContaining({ status: 'MATCHED', requestedKwh: 0 }),
+      }),
     );
   });
 
@@ -83,10 +106,16 @@ describe('MatchingService.runMatching - FIFO matching', () => {
 
     expect(result.matched).toBe(1);
     expect(offerUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 's1' }, data: expect.objectContaining({ availableKwh: 6, status: 'PARTIALLY_MATCHED' }) }),
+      expect.objectContaining({
+        where: { id: 's1' },
+        data: expect.objectContaining({ availableKwh: 6, status: 'PARTIALLY_MATCHED' }),
+      }),
     );
     expect(requestUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'b1' }, data: expect.objectContaining({ requestedKwh: 0, status: 'MATCHED' }) }),
+      expect.objectContaining({
+        where: { id: 'b1' },
+        data: expect.objectContaining({ requestedKwh: 0, status: 'MATCHED' }),
+      }),
     );
   });
 
@@ -127,7 +156,10 @@ describe('MatchingService.runMatching - FIFO matching', () => {
     expect(result.failed).toBe(1);
     expect(matchUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: 'FAILED', failureReason: 'Billing service unavailable' }),
+        data: expect.objectContaining({
+          status: 'FAILED',
+          failureReason: 'Billing service unavailable',
+        }),
       }),
     );
   });

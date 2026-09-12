@@ -16,7 +16,10 @@ export class CreateReadingDto {
   @Min(0)
   consumptionKwh: number;
 
-  @ApiProperty({ example: '2026-05-27T10:00:00.000Z', description: 'Meter reading timestamp (ISO 8601)' })
+  @ApiProperty({
+    example: '2026-05-27T10:00:00.000Z',
+    description: 'Meter reading timestamp (ISO 8601)',
+  })
   @IsDateString()
   timestamp: string;
 }

@@ -16,10 +16,7 @@ export class TradesController {
   @Post()
   @ApiOperation({ summary: 'Record a completed energy trade (idempotent)' })
   @ApiResponse({ status: 201, description: 'Trade recorded, ledger entries created' })
-  async create(
-    @Body() dto: CreateTradeDto,
-    @Headers(HEADER_CORRELATION_ID) correlationId: string,
-  ) {
+  async create(@Body() dto: CreateTradeDto, @Headers(HEADER_CORRELATION_ID) correlationId: string) {
     const cid = getOrGenerateCorrelationId({ [HEADER_CORRELATION_ID]: correlationId });
     this.logger.log(`POST /trades tradeId=${dto.tradeId} [cid=${cid}]`);
     return this.tradesService.createTrade(dto);

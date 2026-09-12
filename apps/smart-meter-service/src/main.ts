@@ -28,7 +28,9 @@ async function bootstrap() {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Smart Meter Service')
-    .setDescription('Receives and processes household smart meter readings. Publishes surplus/demand events.')
+    .setDescription(
+      'Receives and processes household smart meter readings. Publishes surplus/demand events.',
+    )
     .setVersion('1.0')
     .addTag('Readings')
     .addTag('Households')

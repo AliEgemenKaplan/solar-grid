@@ -35,7 +35,9 @@ export class MatchingService {
     });
 
     if (openSellers.length === 0 || openBuyers.length === 0) {
-      this.logger.log(`No matching candidates: ${openSellers.length} sellers, ${openBuyers.length} buyers [cid=${correlationId}]`);
+      this.logger.log(
+        `No matching candidates: ${openSellers.length} sellers, ${openBuyers.length} buyers [cid=${correlationId}]`,
+      );
       return result;
     }
 
@@ -44,7 +46,9 @@ export class MatchingService {
     try {
       priceResponse = await this.pricingClient.getCurrentPrice(correlationId);
     } catch (err) {
-      this.logger.error(`Failed to fetch price, aborting matching: ${err.message} [cid=${correlationId}]`);
+      this.logger.error(
+        `Failed to fetch price, aborting matching: ${err.message} [cid=${correlationId}]`,
+      );
       return result;
     }
 
@@ -65,7 +69,12 @@ export class MatchingService {
         const tradeKwh = Math.min(seller.availableKwh, buyer.requestedKwh);
         const totalAmount = roundToDecimals(tradeKwh * priceResponse.pricePerKwh, 2);
         const tradeId = generateTradeId();
-        const idempotencyKey = generateIdempotencyKey('match', seller.id, buyer.id, String(Date.now()));
+        const idempotencyKey = generateIdempotencyKey(
+          'match',
+          seller.id,
+          buyer.id,
+          String(Date.now()),
+        );
 
         // Create PROPOSED trade match
         const tradeMatch = await this.prisma.tradeMatch.create({
@@ -138,7 +147,9 @@ export class MatchingService {
             data: { status: 'FAILED', failureReason: err.message },
           });
           result.failed++;
-          this.logger.error(`Trade FAILED: ${tradeId} reason=${err.message} [cid=${correlationId}]`);
+          this.logger.error(
+            `Trade FAILED: ${tradeId} reason=${err.message} [cid=${correlationId}]`,
+          );
         }
       }
     }

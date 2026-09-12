@@ -5,11 +5,7 @@ import { PricesModule } from './prices/prices.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
-  imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    PrismaModule,
-    PricesModule,
-  ],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, PricesModule],
   controllers: [HealthController],
 })
 export class AppModule {}

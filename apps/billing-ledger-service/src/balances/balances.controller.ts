@@ -11,7 +11,10 @@ export class BalancesController {
 
   @Get(':householdId')
   @ApiOperation({ summary: 'Get current balance for a household' })
-  @ApiResponse({ status: 200, description: 'Current balance (positive = net seller, negative = net buyer)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Current balance (positive = net seller, negative = net buyer)',
+  })
   async getBalance(@Param('householdId') householdId: string) {
     this.logger.log(`GET /balances/${householdId}`);
     const balance = await this.prisma.householdBalance.findUnique({

@@ -27,7 +27,10 @@ export class ReadingsService {
     private readonly messaging: MessagingService,
   ) {}
 
-  static calculateEnergyStatus(productionKwh: number, consumptionKwh: number): EnergyCalculationResult {
+  static calculateEnergyStatus(
+    productionKwh: number,
+    consumptionKwh: number,
+  ): EnergyCalculationResult {
     const netKwh = productionKwh - consumptionKwh;
     if (netKwh > 0) {
       return { status: EnergyStatus.SURPLUS, netKwh, surplusKwh: netKwh, demandKwh: 0 };
@@ -81,7 +84,9 @@ export class ReadingsService {
         surplusKwh,
         timestamp: dto.timestamp,
       });
-      this.logger.log(`Published EnergySurplusDetected for ${dto.householdId} [cid=${correlationId}]`);
+      this.logger.log(
+        `Published EnergySurplusDetected for ${dto.householdId} [cid=${correlationId}]`,
+      );
     } else if (status === EnergyStatus.DEMAND) {
       await this.messaging.publishDemandDetected({
         eventId: generateId(),
@@ -93,7 +98,9 @@ export class ReadingsService {
         demandKwh,
         timestamp: dto.timestamp,
       });
-      this.logger.log(`Published EnergyDemandDetected for ${dto.householdId} [cid=${correlationId}]`);
+      this.logger.log(
+        `Published EnergyDemandDetected for ${dto.householdId} [cid=${correlationId}]`,
+      );
     }
 
     return { ...reading, surplusKwh, demandKwh };

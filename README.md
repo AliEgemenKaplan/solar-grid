@@ -4,13 +4,13 @@ Solar Grid is a CENG442 microservice architecture project for neighborhood-level
 
 ## Services
 
-| Service | Port | Responsibility |
-| --- | --- | --- |
-| smart-meter-service | 3001 | Receives smart meter readings, calculates household energy state, publishes surplus/demand events |
-| pricing-engine-service | 3002 | Maintains pricing rules and calculates current price per kWh |
-| trade-matching-service | 3003 | Consumes RabbitMQ events, creates offers/requests, performs FIFO matching, calls Pricing and Billing |
-| billing-ledger-service | 3004 | Records completed trades, ledger entries, balances, and billing idempotency |
-| RabbitMQ | 5672 / 15672 | Event broker and management UI |
+| Service                | Port         | Responsibility                                                                                       |
+| ---------------------- | ------------ | ---------------------------------------------------------------------------------------------------- |
+| smart-meter-service    | 3001         | Receives smart meter readings, calculates household energy state, publishes surplus/demand events    |
+| pricing-engine-service | 3002         | Maintains pricing rules and calculates current price per kWh                                         |
+| trade-matching-service | 3003         | Consumes RabbitMQ events, creates offers/requests, performs FIFO matching, calls Pricing and Billing |
+| billing-ledger-service | 3004         | Records completed trades, ledger entries, balances, and billing idempotency                          |
+| RabbitMQ               | 5672 / 15672 | Event broker and management UI                                                                       |
 
 Each microservice owns a separate PostgreSQL database.
 
@@ -172,19 +172,19 @@ SolarGrid/
 
 ## Documentation
 
-| Doc | Purpose |
-| --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Final service architecture and communication patterns |
-| [docs/api-contracts.md](docs/api-contracts.md) | REST endpoints and payload examples |
-| [docs/event-flow.md](docs/event-flow.md) | RabbitMQ topology, routing keys, and flow |
-| [docs/database-design.md](docs/database-design.md) | Database tables per service |
-| [docs/reliability.md](docs/reliability.md) | Idempotency, DLQ behavior, correlation IDs, and health endpoints |
-| [docs/demo-script.md](docs/demo-script.md) | Demo execution and expected checks |
+| Doc                                                | Purpose                                                          |
+| -------------------------------------------------- | ---------------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)       | Final service architecture and communication patterns            |
+| [docs/api-contracts.md](docs/api-contracts.md)     | REST endpoints and payload examples                              |
+| [docs/event-flow.md](docs/event-flow.md)           | RabbitMQ topology, routing keys, and flow                        |
+| [docs/database-design.md](docs/database-design.md) | Database tables per service                                      |
+| [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints |
+| [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                               |
 
 ## Team Contributions
 
-| Name | Contribution |
-| --- | --- |
+| Name              | Contribution                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
 | Ali Egemen Kaplan | project setup, infrastructure, Smart Meter Service, Pricing Engine Service, validation support |
 
 ## Report Evidence Checklist

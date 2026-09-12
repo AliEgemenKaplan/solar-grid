@@ -18,13 +18,21 @@ export class MessagingService {
     this.logger.log(
       `Publishing EnergySurplusDetected: household=${event.householdId} surplus=${event.surplusKwh}kWh [cid=${event.correlationId}]`,
     );
-    await this.amqpConnection.publish(EXCHANGE_SOLAR_GRID_ENERGY, ROUTING_KEY_SURPLUS_DETECTED, event);
+    await this.amqpConnection.publish(
+      EXCHANGE_SOLAR_GRID_ENERGY,
+      ROUTING_KEY_SURPLUS_DETECTED,
+      event,
+    );
   }
 
   async publishDemandDetected(event: EnergyDemandDetectedEvent): Promise<void> {
     this.logger.log(
       `Publishing EnergyDemandDetected: household=${event.householdId} demand=${event.demandKwh}kWh [cid=${event.correlationId}]`,
     );
-    await this.amqpConnection.publish(EXCHANGE_SOLAR_GRID_ENERGY, ROUTING_KEY_DEMAND_DETECTED, event);
+    await this.amqpConnection.publish(
+      EXCHANGE_SOLAR_GRID_ENERGY,
+      ROUTING_KEY_DEMAND_DETECTED,
+      event,
+    );
   }
 }

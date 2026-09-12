@@ -30,13 +30,20 @@ export class PricesController {
     @Headers(HEADER_CORRELATION_ID) correlationId: string,
   ) {
     const cid = getOrGenerateCorrelationId({ [HEADER_CORRELATION_ID]: correlationId });
-    this.logger.log(`POST /prices/recalculate supply=${dto.totalSupplyKwh} demand=${dto.totalDemandKwh} [cid=${cid}]`);
+    this.logger.log(
+      `POST /prices/recalculate supply=${dto.totalSupplyKwh} demand=${dto.totalDemandKwh} [cid=${cid}]`,
+    );
     return this.pricesService.recalculate(dto);
   }
 
   @Get('history')
   @ApiOperation({ summary: 'Get price snapshot history' })
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max records (default 50)' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Max records (default 50)',
+  })
   async getHistory(
     @Query('limit') limit?: number,
     @Headers(HEADER_CORRELATION_ID) correlationId?: string,

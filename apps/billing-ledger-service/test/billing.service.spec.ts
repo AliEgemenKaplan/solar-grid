@@ -86,7 +86,9 @@ describe('TradesService - Balance Updates', () => {
     mockLedgerEntry.create.mockResolvedValue({});
     mockHouseholdBalance.upsert.mockResolvedValue({});
 
-    await service.createTrade(buildTradeDto({ totalAmount: 19, sellerHouseholdId: 'HH-S', buyerHouseholdId: 'HH-B' }));
+    await service.createTrade(
+      buildTradeDto({ totalAmount: 19, sellerHouseholdId: 'HH-S', buyerHouseholdId: 'HH-B' }),
+    );
 
     const sellerCall = mockHouseholdBalance.upsert.mock.calls.find(
       (c) => c[0].where.householdId === 'HH-S',
@@ -106,7 +108,9 @@ describe('TradesService - Balance Updates', () => {
     mockLedgerEntry.create.mockResolvedValue({});
     mockHouseholdBalance.upsert.mockResolvedValue({});
 
-    await service.createTrade(buildTradeDto({ sellerHouseholdId: 'HH-S', buyerHouseholdId: 'HH-B' }));
+    await service.createTrade(
+      buildTradeDto({ sellerHouseholdId: 'HH-S', buyerHouseholdId: 'HH-B' }),
+    );
 
     const creditEntry = mockLedgerEntry.create.mock.calls.find(
       (c) => c[0].data.entryType === 'CREDIT',

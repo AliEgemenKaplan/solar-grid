@@ -18,7 +18,9 @@ export class BillingClient {
 
   async createTrade(dto: CompletedTradeDto): Promise<any> {
     const url = `${this.baseUrl}/trades`;
-    this.logger.debug(`Sending trade to billing: tradeId=${dto.tradeId} [cid=${dto.correlationId}]`);
+    this.logger.debug(
+      `Sending trade to billing: tradeId=${dto.tradeId} [cid=${dto.correlationId}]`,
+    );
     const response = await firstValueFrom(
       this.httpService.post(url, dto, {
         headers: { [HEADER_CORRELATION_ID]: dto.correlationId },
