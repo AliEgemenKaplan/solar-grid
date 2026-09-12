@@ -96,6 +96,8 @@ services:
       PORT: 3001
       DATABASE_URL: postgresql://postgres:postgres@postgres-smart-meter:5432/smart_meter_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      OUTBOX_POLL_INTERVAL_MS: 2000
+      OUTBOX_PUBLISH_TIMEOUT_MS: 5000
     depends_on:
       postgres-smart-meter:
         condition: service_healthy
@@ -149,6 +151,7 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       PRICING_ENGINE_URL: http://pricing-engine-service:3002
       BILLING_LEDGER_URL: http://billing-ledger-service:3004
+      HTTP_CLIENT_TIMEOUT_MS: 5000
     depends_on:
       postgres-matching:
         condition: service_healthy

@@ -1,82 +1,120 @@
 # Solar Grid - Reliability
 
-## Event Idempotency
+Every guarantee below is covered by a test that fails when the guarantee is
+removed. The integration tests run against a real PostgreSQL and a real
+RabbitMQ through Testcontainers: `pnpm test:integration`.
 
-RabbitMQ provides at-least-once delivery, so the trade-matching-service treats Smart Meter events as potentially duplicated.
+## The reading and its event cannot disagree
 
-- `EnergySurplusDetected.eventId` is stored as `sell_offers.sourceEventId`.
-- `EnergyDemandDetected.eventId` is stored as `buy_requests.sourceEventId`.
-- Both columns are unique for non-null values.
-- When a duplicate event arrives, the consumer logs it and skips offer/request creation and matching for that duplicate message.
+Writing to the database and publishing to a broker are two separate systems,
+so doing both in sequence has no safe ordering: publish first and a database
+failure invents an event for a reading that does not exist; write first and a
+broker failure loses an event for a reading that does.
 
-This prevents duplicate sell offers or buy requests when RabbitMQ redelivers the same event.
+smart-meter-service writes the reading, the household status and the event to
+`outbox_events` in a single transaction. A publisher then moves pending rows
+to RabbitMQ and marks them published. If the broker is unreachable the row
+stays pending and the next pass retries it.
 
-## Billing Idempotency
+The publisher applies its own deadline to each publish. The AMQP client queues
+messages while it is offline instead of failing, so without a deadline one
+unreachable broker would stall the loop.
 
-The billing-ledger-service protects financial records with an `idempotencyKey`.
+An event may therefore be published twice - after a crash between the publish
+and the update, for instance. That is intentional: delivery is at least once
+and the consumer removes the duplicates.
 
-1. trade-matching-service sends an `idempotencyKey` with every completed trade.
-2. billing-ledger-service checks `idempotency_keys` before writing ledger data.
-3. If the key already exists, it returns the original trade with `duplicate: true`.
-4. If the key is new, it creates the completed trade, idempotency key, ledger entries, and balances in a single Prisma transaction.
+## The same reading is only counted once
 
-The transaction writes:
+A meter reports one reading per household per timestamp, so
+`meter_readings (householdId, timestamp)` is unique. Re-sending a reading
+returns the stored one with `"duplicate": true` and queues no second event.
 
-- `completed_trade`
-- `idempotency_key`
-- seller `CREDIT` ledger entry
-- buyer `DEBIT` ledger entry
-- seller balance increment
-- buyer balance decrement
+## The same event only creates one offer
 
-If any step fails, the transaction rolls back.
+`sell_offers.sourceEventId` and `buy_requests.sourceEventId` are unique. The
+consumer inserts and treats a unique violation as "already handled" rather
+than checking first, because a check followed by an insert leaves a gap that
+two simultaneous deliveries of the same event can slip through.
 
-## RabbitMQ DLQ Behavior
+## The same energy is never sold twice
 
-The trade-matching-service subscribes to:
+trade-matching-service reserves before it bills:
 
-- exchange: `solar-grid.energy`
-- queue: `trade-matching.energy.queue`
-- routing keys: `energy.surplus.detected`, `energy.demand.detected`
+1. **Reserve** - in one transaction, take the energy off the offer and the
+   request and record the trade as `PENDING_BILLING`.
+2. **Bill** - call billing outside that transaction, so no lock is held while
+   the network is involved.
+3. **Confirm** - record what billing answered.
 
-The main queue is configured with:
+The reservation transaction takes a PostgreSQL advisory lock, so only one
+reservation happens at a time however many runs are in flight, and both
+updates carry their own amount check (`availableKwh >= energyKwh`). Postgres
+re-evaluates that check against the committed row, so a competing transaction
+cannot slip between a read and a write. If either side no longer has the
+energy, the whole reservation rolls back and the trade is skipped.
 
-- dead-letter exchange: `solar-grid.energy.dlx`
-- dead-letter routing key: `dlq.energy`
+## A trade is never billed twice
 
-The DLQ queue `trade-matching.energy.dlq` is declared and bound to the DLX with routing key `dlq.energy`.
+The idempotency key is the trade id. It is stored with the trade and never
+regenerated, so every attempt to bill that trade carries the same key and the
+same payload, and billing recognises a retry for what it is.
 
-No separate retry queue or exponential backoff retry policy is implemented. If the consumer throws while processing a message, the failed message is routed to the DLQ by RabbitMQ/NestJS RabbitMQ handling. This is intentionally simple for the university demo.
+What billing answers decides what happens to the reservation:
 
-## Matching Concurrency
+| Answer                           | Meaning                        | What happens                                         |
+| -------------------------------- | ------------------------------ | ---------------------------------------------------- |
+| 2xx                              | recorded                       | Trade is `COMPLETED`                                 |
+| 4xx                              | refused, and will refuse again | Energy is given back, trade is `FAILED`              |
+| timeout, 5xx, dropped connection | unknown                        | Energy stays reserved, trade stays `PENDING_BILLING` |
 
-The RabbitMQ consumer prefetch is set to `1` for this demo. That serializes event processing in a single service instance and reduces the risk of two matching runs updating the same offers or requests at the same time.
+The unknown case is the one that matters. Billing may well have recorded the
+trade before the answer was lost, so writing it off and re-matching the same
+energy would charge the households twice. Instead the trade keeps its
+reservation, and the next matching run retries it with the same key before it
+matches anything new.
 
-This is not a distributed lock. Running multiple trade-matching-service replicas would require a stronger database locking strategy.
+On the billing side the `idempotency_keys` unique index is the real guard: two
+requests carrying one key can both pass a preliminary check, so the request
+that loses the insert reports the winner's trade instead of failing.
+
+## Failed messages stop, they do not spin
+
+The RabbitMQ library requeues by default, which turns one failing message into
+an endless redelivery loop that blocks everything behind it. The consumer nacks
+without requeue instead, so the message is dead lettered to
+`trade-matching.energy.dlq` through `solar-grid.energy.dlx`.
+
+Malformed events are rejected before any database work, since no number of
+retries will fix a message that is missing its `surplusKwh`.
+
+There is no delayed retry yet: a transient failure goes to the dead letter
+queue on the first attempt and has to be replayed. A retry queue with a TTL
+and a bounded attempt count is the next step.
+
+## Events survive a broker restart
+
+A durable exchange and a durable queue only preserve the topology. Messages
+also have to be published as persistent, which the publisher does through
+`defaultPublishOptions`. Each message carries `messageId` (the event id),
+`correlationId` and `type` so it can be traced and deduplicated without
+parsing the body.
+
+## Service to service calls have a deadline
+
+Calls to pricing and billing time out (`HTTP_CLIENT_TIMEOUT_MS`, 5s by
+default). Without one, a hung call blocks the single consumer channel and no
+further events are processed.
 
 ## Correlation IDs
 
-Each HTTP service assigns a `x-correlation-id` header if the request does not include one.
+Each HTTP service assigns `x-correlation-id` when a request arrives without
+one. It travels through log lines, the event payload, the AMQP `correlationId`
+property and header, the REST calls to pricing and billing, and the rows those
+calls write.
 
-The ID is propagated through:
+## Health endpoints
 
-- Smart Meter log lines
-- RabbitMQ event payloads
-- Trade Matching log lines
-- Trade Matching REST calls to Pricing via `x-correlation-id`
-- Trade Matching REST calls to Billing via `x-correlation-id`
-- Billing trade payloads and ledger rows
-
-This lets the demo trace one reading through event processing, matching, and ledger creation.
-
-## Health Endpoints
-
-Each service exposes `GET /health`.
-
-The endpoint is intentionally lightweight and returns service liveness:
-
-```json
-{ "status": "ok", "service": "<service-name>", "timestamp": "..." }
-```
-
-Docker Compose still uses infrastructure-level health checks for PostgreSQL and RabbitMQ startup ordering.
+Each service exposes `GET /health`, a liveness check that reports the service
+name and a timestamp. It does not yet check the database or the broker;
+`/health/live` and `/health/ready` come with the operations work.

@@ -8,7 +8,7 @@ Solar Grid is a neighborhood-level peer-to-peer renewable energy trading platfor
 
 ### 1. smart-meter-service (port 3001)
 
-Accepts raw smart meter readings from households. Calculates whether each reading results in a surplus or demand condition based on `netKwh = productionKwh - consumptionKwh`. Persists readings and maintains the current energy status per household. Publishes domain events to RabbitMQ when surplus or demand is detected.
+Accepts raw smart meter readings from households. Calculates whether each reading results in a surplus or demand condition based on `netKwh = productionKwh - consumptionKwh`. Persists readings and maintains the current energy status per household. Surplus and demand events are written to a transactional outbox in the same transaction as the reading, and a publisher moves them to RabbitMQ, so a broker outage delays events instead of losing them.
 
 ### 2. pricing-engine-service (port 3002)
 
@@ -16,7 +16,7 @@ Maintains the pricing rule (base, min, max price per kWh). Calculates the curren
 
 ### 3. trade-matching-service (port 3003)
 
-Subscribes to RabbitMQ energy events. When a surplus event arrives it creates a sell offer; when a demand event arrives it creates a buy request. Stores the source `eventId` on offers/requests so duplicate RabbitMQ deliveries do not create duplicate work. Runs a FIFO matching algorithm pairing sellers and buyers, supporting partial fills. Fetches the current price from the pricing engine and sends completed trades to the billing service.
+Subscribes to RabbitMQ energy events. When a surplus event arrives it creates a sell offer; when a demand event arrives it creates a buy request. Stores the source `eventId` on offers/requests so duplicate RabbitMQ deliveries do not create duplicate work. Runs a FIFO matching algorithm pairing sellers and buyers, supporting partial fills. Energy is reserved on both sides before billing is called and released only if billing refuses outright, so the same kilowatt hours cannot be sold or charged twice. See [reliability.md](reliability.md).
 
 ### 4. billing-ledger-service (port 3004)
 
@@ -42,14 +42,18 @@ This enforces loose coupling: if the billing service changes its schema, no othe
 - **Exchange**: `solar-grid.energy` (topic type)
 - **Publisher**: smart-meter-service
 - **Consumer**: trade-matching-service
-- Events are durable and survive broker restarts.
-- A dead-letter exchange (`solar-grid.energy.dlx`) captures messages that fail during consumer processing.
-- No separate retry queue is implemented; failed messages are parked in the DLQ for inspection or manual replay.
+- Exchanges and queues are durable and messages are published as persistent, so events survive a broker restart.
+- A dead-letter exchange (`solar-grid.energy.dlx`) captures messages that fail during consumer processing; the consumer nacks without requeue so a failing message is parked rather than redelivered forever.
+- No delayed retry queue yet: a failed message goes to the DLQ on the first attempt and is replayed by hand.
 
 ### REST APIs (Sync Calls)
 
 - trade-matching-service → pricing-engine-service: `GET /prices/current`
 - trade-matching-service → billing-ledger-service: `POST /trades`
+
+Both calls have a timeout (`HTTP_CLIENT_TIMEOUT_MS`). A trade whose billing
+call times out keeps its reservation and is retried with the same idempotency
+key rather than being written off.
 
 REST calls use environment variables for service URLs so they work both locally and inside Docker Compose without hardcoded hostnames.
 

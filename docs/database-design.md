@@ -19,6 +19,28 @@ Each service owns its own PostgreSQL database. No service ever accesses another 
 | timestamp      | DateTime | From the meter device              |
 | createdAt      | DateTime | Server insert time                 |
 
+`(householdId, timestamp)` is unique: a meter reports one reading per
+timestamp, so a retried request cannot create a second reading or event.
+
+### `outbox_events`
+
+| Column        | Type      | Notes                                        |
+| ------------- | --------- | -------------------------------------------- |
+| id            | cuid      | PK                                           |
+| eventId       | String    | UNIQUE; also sent as the AMQP messageId      |
+| eventType     | String    | EnergySurplusDetected / EnergyDemandDetected |
+| routingKey    | String    | Exchange routing key                         |
+| payload       | Json      | The event exactly as it will be published    |
+| correlationId | String    |                                              |
+| status        | Enum      | PENDING / PUBLISHED                          |
+| attempts      | Int       | Failed publish attempts                      |
+| lastError     | String?   | Why the last attempt failed                  |
+| createdAt     | DateTime  | Indexed with status for the publisher scan   |
+| publishedAt   | DateTime? |                                              |
+
+Written in the same transaction as the reading that produced it, so the
+database and the broker can never disagree about what happened.
+
 ### `household_energy_status`
 
 | Column            | Type     | Notes                       |
@@ -82,22 +104,25 @@ Same structure as `sell_offers` but with `requestedKwh` instead of `availableKwh
 
 ### `trade_matches`
 
-| Column                | Type     | Notes                              |
-| --------------------- | -------- | ---------------------------------- |
-| id                    | cuid     | PK                                 |
-| tradeId               | String   | UNIQUE; sent to billing            |
-| sellerHouseholdId     | String   |                                    |
-| buyerHouseholdId      | String   |                                    |
-| energyKwh             | Float    | Actual trade volume                |
-| pricePerKwh           | Float    | Price at time of match             |
-| totalAmount           | Float    | energyKwh × pricePerKwh, rounded   |
-| currency              | String   |                                    |
-| status                | Enum     | PROPOSED / COMPLETED / FAILED      |
-| billingTradeId        | String?  | Optional external reference        |
-| idempotencyKey        | String   | UNIQUE; sent to billing for safety |
-| correlationId         | String   |                                    |
-| failureReason         | String?  | Set when status = FAILED           |
-| createdAt / updatedAt | DateTime |                                    |
+| Column                | Type     | Notes                                |
+| --------------------- | -------- | ------------------------------------ |
+| id                    | cuid     | PK                                   |
+| tradeId               | String   | UNIQUE; sent to billing              |
+| sellerHouseholdId     | String   |                                      |
+| buyerHouseholdId      | String   |                                      |
+| energyKwh             | Float    | Actual trade volume                  |
+| pricePerKwh           | Float    | Price at time of match               |
+| totalAmount           | Float    | energyKwh × pricePerKwh, rounded     |
+| currency              | String   |                                      |
+| status                | Enum     | PENDING_BILLING / COMPLETED / FAILED |
+| billingTradeId        | String?  | Trade id billing confirmed           |
+| offerId               | String   | Offer this trade reserved from       |
+| requestId             | String   | Request this trade reserved for      |
+| billingAttempts       | Int      | How many times billing was called    |
+| idempotencyKey        | String   | UNIQUE; equals tradeId               |
+| correlationId         | String   |                                      |
+| failureReason         | String?  | Set when status = FAILED             |
+| createdAt / updatedAt | DateTime |                                      |
 
 ---
 

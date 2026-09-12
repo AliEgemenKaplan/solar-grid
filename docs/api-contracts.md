@@ -35,9 +35,14 @@ Submit a smart meter reading.
   "surplusKwh": 5.3,
   "demandKwh": 0,
   "timestamp": "2026-05-27T10:00:00.000Z",
-  "createdAt": "2026-05-27T10:00:01.000Z"
+  "createdAt": "2026-05-27T10:00:01.000Z",
+  "duplicate": false
 }
 ```
+
+A household reports one reading per timestamp. Re-sending the same
+`householdId` and `timestamp` returns the stored reading with
+`"duplicate": true` and publishes no second event.
 
 ### GET /readings/:householdId
 
@@ -181,11 +186,23 @@ Single trade match by trade ID.
 
 ### POST /matching/run
 
-Manually trigger FIFO matching.
+Manually trigger FIFO matching. Safe to call while events are being consumed:
+reservations are serialised, so a concurrent run cannot sell the same energy.
+
 **Response (201):**
 
 ```json
-{ "matched": 1, "failed": 0, "skipped": 0 }
+{ "matched": 1, "failed": 0, "skipped": 0, "pending": 0, "settled": 0 }
 ```
+
+| Field     | Meaning                                                     |
+| --------- | ----------------------------------------------------------- |
+| `matched` | trades reserved and billed during this run                  |
+| `failed`  | trades billing refused; their energy was released           |
+| `skipped` | pairs skipped because a household would trade with itself   |
+| `pending` | trades reserved whose billing answer never arrived          |
+| `settled` | trades reserved by an earlier run and confirmed in this one |
+
+A trade match is `PENDING_BILLING`, `COMPLETED` or `FAILED`.
 
 ### GET /health
