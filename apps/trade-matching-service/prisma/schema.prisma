@@ -1,0 +1,83 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+model SellOffer {
+  id            String      @id @default(cuid())
+  householdId   String
+  sourceEventId String?     @unique
+  availableKwh  Float
+  originalKwh   Float
+  status        OfferStatus @default(OPEN)
+  correlationId String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([status])
+  @@index([householdId])
+  @@map("sell_offers")
+}
+
+model BuyRequest {
+  id            String        @id @default(cuid())
+  householdId   String
+  sourceEventId String?       @unique
+  requestedKwh  Float
+  originalKwh   Float
+  status        RequestStatus @default(OPEN)
+  correlationId String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status])
+  @@index([householdId])
+  @@map("buy_requests")
+}
+
+model TradeMatch {
+  id                String      @id @default(cuid())
+  tradeId           String      @unique
+  sellerHouseholdId String
+  buyerHouseholdId  String
+  energyKwh         Float
+  pricePerKwh       Float
+  totalAmount       Float
+  currency          String
+  status            TradeStatus @default(PROPOSED)
+  billingTradeId    String?
+  idempotencyKey    String      @unique
+  correlationId     String
+  failureReason     String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([status])
+  @@map("trade_matches")
+}
+
+enum OfferStatus {
+  OPEN
+  PARTIALLY_MATCHED
+  MATCHED
+  CANCELLED
+}
+
+enum RequestStatus {
+  OPEN
+  PARTIALLY_MATCHED
+  MATCHED
+  CANCELLED
+}
+
+enum TradeStatus {
+  PROPOSED
+  COMPLETED
+  FAILED
+}

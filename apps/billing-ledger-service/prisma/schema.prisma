@@ -1,0 +1,69 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+model CompletedTrade {
+  id                String   @id @default(cuid())
+  tradeId           String   @unique
+  sellerHouseholdId String
+  buyerHouseholdId  String
+  energyKwh         Float
+  pricePerKwh       Float
+  totalAmount       Float
+  currency          String
+  idempotencyKey    String   @unique
+  correlationId     String
+  completedAt       DateTime
+  createdAt         DateTime @default(now())
+
+  @@index([sellerHouseholdId])
+  @@index([buyerHouseholdId])
+  @@map("completed_trades")
+}
+
+model LedgerEntry {
+  id            String    @id @default(cuid())
+  tradeId       String
+  householdId   String
+  entryType     EntryType
+  amount        Float
+  currency      String
+  correlationId String
+  createdAt     DateTime  @default(now())
+
+  @@index([householdId])
+  @@index([tradeId])
+  @@map("ledger_entries")
+}
+
+model HouseholdBalance {
+  id          String   @id @default(cuid())
+  householdId String   @unique
+  balance     Float    @default(0)
+  currency    String   @default("TRY")
+  updatedAt   DateTime @updatedAt
+
+  @@map("household_balances")
+}
+
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  tradeId      String
+  responseHash String?
+  createdAt    DateTime @default(now())
+
+  @@map("idempotency_keys")
+}
+
+enum EntryType {
+  CREDIT
+  DEBIT
+}

@@ -1,0 +1,41 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+model MeterReading {
+  id             String       @id @default(cuid())
+  householdId    String
+  productionKwh  Float
+  consumptionKwh Float
+  netKwh         Float
+  status         EnergyStatus
+  timestamp      DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([householdId])
+  @@map("meter_readings")
+}
+
+model HouseholdEnergyStatus {
+  id                String       @id @default(cuid())
+  householdId       String       @unique
+  currentStatus     EnergyStatus
+  currentSurplusKwh Float        @default(0)
+  currentDemandKwh  Float        @default(0)
+  updatedAt         DateTime     @updatedAt
+
+  @@map("household_energy_status")
+}
+
+enum EnergyStatus {
+  SURPLUS
+  DEMAND
+  BALANCED
+}

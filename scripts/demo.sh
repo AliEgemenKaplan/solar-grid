@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+BASE_SMART_METER="${SMART_METER_URL:-http://localhost:3001}"
+BASE_PRICING="${PRICING_URL:-http://localhost:3002}"
+BASE_MATCHING="${MATCHING_URL:-http://localhost:3003}"
+BASE_BILLING="${BILLING_URL:-http://localhost:3004}"
+
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+else
+  echo "ERROR: python3 or python is required for JSON checks."
+  exit 1
+fi
+
+RUN_ID="${DEMO_RUN_ID:-$(date +%Y%m%d%H%M%S)-$RANDOM}"
+SELLER_ID="HH-SELLER-${RUN_ID}"
+BUYER_ID="HH-BUYER-${RUN_ID}"
+IDEM_SELLER_ID="HH-IDEM-SELLER-${RUN_ID}"
+IDEM_BUYER_ID="HH-IDEM-BUYER-${RUN_ID}"
+CORRELATION_ID="demo-${RUN_ID}"
+
+PASS_COUNT=0
+FAIL_COUNT=0
+
+pass() {
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo "PASS: $1"
+}
+
+fail() {
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  echo "FAIL: $1"
+}
+
+request() {
+  local method="$1"
+  local url="$2"
+  local body="${3:-}"
+  if [ -n "$body" ]; then
+    curl -fsS -X "$method" "$url" \
+      -H "Content-Type: application/json" \
+      -H "x-correlation-id: $CORRELATION_ID" \
+      -d "$body"
+  else
+    curl -fsS -X "$method" "$url" \
+      -H "x-correlation-id: $CORRELATION_ID"
+  fi
+}
+
+json_value() {
+  "$PYTHON_BIN" -c 'import json, sys; data=json.load(sys.stdin); print(data.get(sys.argv[1], ""))' "$1"
+}
+
+json_filter_match() {
+  SELLER="$SELLER_ID" BUYER="$BUYER_ID" "$PYTHON_BIN" -c '
+import json, os, sys
+data = json.load(sys.stdin)
+for item in data:
+    if item.get("sellerHouseholdId") == os.environ["SELLER"] and item.get("buyerHouseholdId") == os.environ["BUYER"]:
+        print(json.dumps(item))
+        sys.exit(0)
+sys.exit(1)
+'
+}
+
+json_has_ledger_entry() {
+  local expected_type="$1"
+  "$PYTHON_BIN" -c '
+import json, sys
+entries = json.load(sys.stdin)
+expected = sys.argv[1]
+sys.exit(0 if any(entry.get("entryType") == expected for entry in entries) else 1)
+' "$expected_type"
+}
+
+echo "Solar Grid End-to-End Demo"
+echo "Run ID: $RUN_ID"
+echo "Smart Meter: $BASE_SMART_METER"
+echo "Pricing:     $BASE_PRICING"
+echo "Matching:    $BASE_MATCHING"
+echo "Billing:     $BASE_BILLING"
+echo
+
+echo "1. Health checks"
+for pair in \
+  "smart-meter|$BASE_SMART_METER/health" \
+  "pricing|$BASE_PRICING/health" \
+  "trade-matching|$BASE_MATCHING/health" \
+  "billing-ledger|$BASE_BILLING/health"; do
+  name="${pair%%|*}"
+  url="${pair#*|}"
+  if response="$(request GET "$url" 2>/dev/null)" && [ "$(printf '%s' "$response" | json_value status)" = "ok" ]; then
+    pass "$name health"
+  else
+    fail "$name health"
+  fi
+done
+echo
+
+echo "2. Current price"
+if price_response="$(request GET "$BASE_PRICING/prices/current" 2>/dev/null)"; then
+  price="$(printf '%s' "$price_response" | json_value pricePerKwh)"
+  currency="$(printf '%s' "$price_response" | json_value currency)"
+  echo "Current price: $price $currency/kWh"
+  pass "current price available"
+else
+  fail "current price available"
+fi
+echo
+
+echo "3. Seller reading"
+seller_body="{\"householdId\":\"$SELLER_ID\",\"productionKwh\":10,\"consumptionKwh\":3,\"timestamp\":\"2026-05-27T10:00:00.000Z\"}"
+if seller_response="$(request POST "$BASE_SMART_METER/readings" "$seller_body" 2>/dev/null)"; then
+  seller_status="$(printf '%s' "$seller_response" | json_value status)"
+  seller_surplus="$(printf '%s' "$seller_response" | json_value surplusKwh)"
+  echo "Seller: $SELLER_ID status=$seller_status surplusKwh=$seller_surplus"
+  [ "$seller_status" = "SURPLUS" ] && pass "seller surplus reading" || fail "seller surplus reading"
+else
+  fail "seller surplus reading"
+fi
+echo
+
+echo "4. Buyer reading"
+buyer_body="{\"householdId\":\"$BUYER_ID\",\"productionKwh\":1,\"consumptionKwh\":5,\"timestamp\":\"2026-05-27T10:01:00.000Z\"}"
+if buyer_response="$(request POST "$BASE_SMART_METER/readings" "$buyer_body" 2>/dev/null)"; then
+  buyer_status="$(printf '%s' "$buyer_response" | json_value status)"
+  buyer_demand="$(printf '%s' "$buyer_response" | json_value demandKwh)"
+  echo "Buyer: $BUYER_ID status=$buyer_status demandKwh=$buyer_demand"
+  [ "$buyer_status" = "DEMAND" ] && pass "buyer demand reading" || fail "buyer demand reading"
+else
+  fail "buyer demand reading"
+fi
+echo
+
+echo "5. Waiting for match"
+MATCH_JSON=""
+for _ in $(seq 1 20); do
+  matches_response="$(request GET "$BASE_MATCHING/matches" 2>/dev/null || true)"
+  if [ -n "$matches_response" ] && MATCH_JSON="$(printf '%s' "$matches_response" | json_filter_match 2>/dev/null)"; then
+    break
+  fi
+  sleep 1
+done
+
+if [ -n "$MATCH_JSON" ]; then
+  trade_id="$(printf '%s' "$MATCH_JSON" | json_value tradeId)"
+  match_status="$(printf '%s' "$MATCH_JSON" | json_value status)"
+  energy_kwh="$(printf '%s' "$MATCH_JSON" | json_value energyKwh)"
+  echo "Match: tradeId=$trade_id status=$match_status energyKwh=$energy_kwh"
+  [ "$match_status" = "COMPLETED" ] && pass "completed match created" || fail "completed match created"
+else
+  fail "completed match created"
+fi
+echo
+
+echo "6. Balances"
+if seller_balance_response="$(request GET "$BASE_BILLING/balances/$SELLER_ID" 2>/dev/null)"; then
+  seller_balance="$(printf '%s' "$seller_balance_response" | json_value balance)"
+  echo "Seller balance: $seller_balance"
+  BALANCE="$seller_balance" "$PYTHON_BIN" -c 'import os, sys; sys.exit(0 if float(os.environ["BALANCE"]) > 0 else 1)' \
+    && pass "seller balance positive" || fail "seller balance positive"
+else
+  fail "seller balance positive"
+fi
+
+if buyer_balance_response="$(request GET "$BASE_BILLING/balances/$BUYER_ID" 2>/dev/null)"; then
+  buyer_balance="$(printf '%s' "$buyer_balance_response" | json_value balance)"
+  echo "Buyer balance: $buyer_balance"
+  BALANCE="$buyer_balance" "$PYTHON_BIN" -c 'import os, sys; sys.exit(0 if float(os.environ["BALANCE"]) < 0 else 1)' \
+    && pass "buyer balance negative" || fail "buyer balance negative"
+else
+  fail "buyer balance negative"
+fi
+echo
+
+echo "7. Ledger entries"
+if seller_ledger="$(request GET "$BASE_BILLING/ledger/$SELLER_ID" 2>/dev/null)" && printf '%s' "$seller_ledger" | json_has_ledger_entry CREDIT; then
+  pass "seller CREDIT ledger entry visible"
+else
+  fail "seller CREDIT ledger entry visible"
+fi
+
+if buyer_ledger="$(request GET "$BASE_BILLING/ledger/$BUYER_ID" 2>/dev/null)" && printf '%s' "$buyer_ledger" | json_has_ledger_entry DEBIT; then
+  pass "buyer DEBIT ledger entry visible"
+else
+  fail "buyer DEBIT ledger entry visible"
+fi
+echo
+
+echo "8. Billing idempotency"
+idem_key="demo-idem-${RUN_ID}"
+idem_trade_id="TRD-DEMO-${RUN_ID}"
+idem_body="{\"tradeId\":\"$idem_trade_id\",\"sellerHouseholdId\":\"$IDEM_SELLER_ID\",\"buyerHouseholdId\":\"$IDEM_BUYER_ID\",\"energyKwh\":2,\"pricePerKwh\":4.0,\"totalAmount\":8.0,\"currency\":\"TRY\",\"idempotencyKey\":\"$idem_key\",\"correlationId\":\"$CORRELATION_ID\",\"completedAt\":\"2026-05-27T10:20:00.000Z\"}"
+first_idem="$(request POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
+second_idem="$(request POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
+duplicate="$(printf '%s' "$second_idem" | json_value duplicate 2>/dev/null || true)"
+echo "Duplicate response: $duplicate"
+[ "$duplicate" = "True" ] || [ "$duplicate" = "true" ] && pass "duplicate idempotency check" || fail "duplicate idempotency check"
+echo
+
+echo "Summary: $PASS_COUNT passed, $FAIL_COUNT failed"
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  exit 1
+fi
+exit 0

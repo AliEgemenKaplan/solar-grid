@@ -1,0 +1,16 @@
+{
+  "name": "@solar-grid/shared-contracts",
+  "version": "1.0.0",
+  "description": "Shared TypeScript contracts, events, DTOs, and constants for Solar Grid services",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "rimraf": "^5.0.5"
+  }
+}

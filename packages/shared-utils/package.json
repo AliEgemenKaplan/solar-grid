@@ -1,0 +1,20 @@
+{
+  "name": "@solar-grid/shared-utils",
+  "version": "1.0.0",
+  "description": "Shared utility functions for Solar Grid services",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/uuid": "^9.0.7",
+    "typescript": "^5.3.3",
+    "rimraf": "^5.0.5"
+  }
+}

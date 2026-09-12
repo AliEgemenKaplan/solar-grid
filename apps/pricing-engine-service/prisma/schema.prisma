@@ -1,0 +1,34 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+model PricingRule {
+  id        String   @id @default(cuid())
+  basePrice Float
+  minPrice  Float
+  maxPrice  Float
+  currency  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("pricing_rules")
+}
+
+model PriceSnapshot {
+  id              String   @id @default(cuid())
+  totalSupplyKwh  Float
+  totalDemandKwh  Float
+  calculatedPrice Float
+  currency        String
+  createdAt       DateTime @default(now())
+
+  @@map("price_snapshots")
+}

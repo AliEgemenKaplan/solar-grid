@@ -1,0 +1,173 @@
+version: '3.8'
+
+services:
+  # ─── Infrastructure ────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: solar-grid-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  postgres-smart-meter:
+    image: postgres:15-alpine
+    container_name: solar-grid-postgres-smart-meter
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: smart_meter_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - smart_meter_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smart_meter_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-pricing:
+    image: postgres:15-alpine
+    container_name: solar-grid-postgres-pricing
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: pricing_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pricing_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pricing_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-matching:
+    image: postgres:15-alpine
+    container_name: solar-grid-postgres-matching
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_DB: matching_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - matching_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d matching_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-ledger:
+    image: postgres:15-alpine
+    container_name: solar-grid-postgres-ledger
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_DB: ledger_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ledger_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ledger_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Application Services ──────────────────────────────────────────────────
+  smart-meter-service:
+    build:
+      context: ..
+      dockerfile: apps/smart-meter-service/Dockerfile
+    container_name: solar-grid-smart-meter
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://postgres:postgres@postgres-smart-meter:5432/smart_meter_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      postgres-smart-meter:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  pricing-engine-service:
+    build:
+      context: ..
+      dockerfile: apps/pricing-engine-service/Dockerfile
+    container_name: solar-grid-pricing-engine
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      DATABASE_URL: postgresql://postgres:postgres@postgres-pricing:5432/pricing_db
+    depends_on:
+      postgres-pricing:
+        condition: service_healthy
+    restart: unless-stopped
+
+  billing-ledger-service:
+    build:
+      context: ..
+      dockerfile: apps/billing-ledger-service/Dockerfile
+    container_name: solar-grid-billing-ledger
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      DATABASE_URL: postgresql://postgres:postgres@postgres-ledger:5432/ledger_db
+    depends_on:
+      postgres-ledger:
+        condition: service_healthy
+    restart: unless-stopped
+
+  trade-matching-service:
+    build:
+      context: ..
+      dockerfile: apps/trade-matching-service/Dockerfile
+    container_name: solar-grid-trade-matching
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DATABASE_URL: postgresql://postgres:postgres@postgres-matching:5432/matching_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PRICING_ENGINE_URL: http://pricing-engine-service:3002
+      BILLING_LEDGER_URL: http://billing-ledger-service:3004
+    depends_on:
+      postgres-matching:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      pricing-engine-service:
+        condition: service_started
+      billing-ledger-service:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  smart_meter_data:
+  pricing_data:
+  matching_data:
+  ledger_data:

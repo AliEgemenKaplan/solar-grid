@@ -1,0 +1,66 @@
+# Validation-only override: remaps HOST-side ports to avoid conflicts with
+# other stacks already running on this machine (microflow, dietai).
+# Internal container ports and inter-service URLs are unchanged.
+#
+# The `!override` tag REPLACES the base ports list instead of merging with it
+# (Compose merges list fields by default, which would re-introduce the
+# conflicting host ports).
+#
+# Use with BOTH files explicitly:
+#   docker compose -f infrastructure/docker-compose.yml \
+#                  -f infrastructure/docker-compose.override.yml up -d
+#
+# Alternate host URLs while this override is active:
+#   smart-meter   -> http://localhost:13001
+#   pricing       -> http://localhost:13002
+#   trade-matching-> http://localhost:13003
+#   billing       -> http://localhost:13004
+#   RabbitMQ UI   -> http://localhost:15682  (amqp on 5682)
+#
+# NOTE: image overrides use locally-cached base images because the Docker
+# registry could not pull postgres:15-alpine / rabbitmq:3.12-management-alpine
+# during validation (transient CloudFront errors). These are functionally
+# equivalent. The main docker-compose.yml keeps the intended alpine tags.
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports: !override
+      - "5682:5672"
+      - "15682:15672"
+
+  postgres-smart-meter:
+    image: postgres:15
+    ports: !override
+      - "5443:5432"
+
+  postgres-pricing:
+    image: postgres:15
+    ports: !override
+      - "5444:5432"
+
+  postgres-matching:
+    image: postgres:15
+    ports: !override
+      - "5445:5432"
+
+  postgres-ledger:
+    image: postgres:15
+    ports: !override
+      - "5446:5432"
+
+  smart-meter-service:
+    ports: !override
+      - "13001:3001"
+
+  pricing-engine-service:
+    ports: !override
+      - "13002:3002"
+
+  trade-matching-service:
+    ports: !override
+      - "13003:3003"
+
+  billing-ledger-service:
+    ports: !override
+      - "13004:3004"

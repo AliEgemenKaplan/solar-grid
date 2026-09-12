@@ -1,0 +1,24 @@
+{
+  "name": "solar-grid",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Neighborhood-level peer-to-peer renewable energy trading platform",
+  "scripts": {
+    "build": "pnpm --filter @solar-grid/shared-contracts build && pnpm --filter @solar-grid/shared-utils build && pnpm -r --filter \"./apps/*\" build",
+    "test": "pnpm -r --filter \"./apps/*\" test",
+    "start:dev": "docker compose -f infrastructure/docker-compose.yml up",
+    "docker:up": "docker compose -f infrastructure/docker-compose.yml up -d --build",
+    "docker:down": "docker compose -f infrastructure/docker-compose.yml down",
+    "docker:clean": "docker compose -f infrastructure/docker-compose.yml down -v --remove-orphans",
+    "prisma:generate": "pnpm -r --filter \"./apps/*\" run prisma:generate",
+    "demo:sh": "bash scripts/demo.sh",
+    "demo:ps": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
