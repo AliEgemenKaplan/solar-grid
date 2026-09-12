@@ -1,24 +1,28 @@
-import { EnergyEventsConsumer } from '../src/messaging/energy-events.consumer';
+import { Nack } from '@golevelup/nestjs-rabbitmq';
 import {
   EnergyDemandDetectedEvent,
   EnergyEventType,
   EnergySurplusDetectedEvent,
 } from '@solar-grid/shared-contracts';
+import { EnergyEventsConsumer, validateEnergyEvent } from '../src/messaging/energy-events.consumer';
+import { Prisma } from '../generated/client';
+
+const uniqueViolation = () =>
+  new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+  });
 
 function buildMocks() {
   const mockPrisma: any = {
-    sellOffer: {
-      findUnique: jest.fn(),
-      create: jest.fn().mockResolvedValue({ id: 'offer-001' }),
-    },
-    buyRequest: {
-      findUnique: jest.fn(),
-      create: jest.fn().mockResolvedValue({ id: 'request-001' }),
-    },
+    sellOffer: { create: jest.fn().mockResolvedValue({ id: 'offer-001' }) },
+    buyRequest: { create: jest.fn().mockResolvedValue({ id: 'request-001' }) },
   };
 
   const mockMatchingService: any = {
-    runMatching: jest.fn().mockResolvedValue({ matched: 0, failed: 0, skipped: 0 }),
+    runMatching: jest
+      .fn()
+      .mockResolvedValue({ matched: 0, failed: 0, skipped: 0, pending: 0, settled: 0 }),
   };
 
   return {
@@ -50,10 +54,9 @@ const demandEvent: EnergyDemandDetectedEvent = {
   timestamp: '2026-05-27T10:01:00.000Z',
 };
 
-describe('EnergyEventsConsumer event idempotency', () => {
-  it('creates one sell offer for a new surplus event', async () => {
+describe('EnergyEventsConsumer', () => {
+  it('creates a sell offer for a new surplus event and runs matching', async () => {
     const { consumer, mockPrisma, mockMatchingService } = buildMocks();
-    mockPrisma.sellOffer.findUnique.mockResolvedValue(null);
 
     await consumer.handleEnergyEvent(surplusEvent);
 
@@ -69,19 +72,8 @@ describe('EnergyEventsConsumer event idempotency', () => {
     expect(mockMatchingService.runMatching).toHaveBeenCalledWith(surplusEvent.correlationId);
   });
 
-  it('skips duplicate surplus events', async () => {
+  it('creates a buy request for a new demand event and runs matching', async () => {
     const { consumer, mockPrisma, mockMatchingService } = buildMocks();
-    mockPrisma.sellOffer.findUnique.mockResolvedValue({ id: 'offer-existing' });
-
-    await consumer.handleEnergyEvent(surplusEvent);
-
-    expect(mockPrisma.sellOffer.create).not.toHaveBeenCalled();
-    expect(mockMatchingService.runMatching).not.toHaveBeenCalled();
-  });
-
-  it('creates one buy request for a new demand event', async () => {
-    const { consumer, mockPrisma, mockMatchingService } = buildMocks();
-    mockPrisma.buyRequest.findUnique.mockResolvedValue(null);
 
     await consumer.handleEnergyEvent(demandEvent);
 
@@ -89,7 +81,6 @@ describe('EnergyEventsConsumer event idempotency', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           sourceEventId: demandEvent.eventId,
-          householdId: demandEvent.householdId,
           requestedKwh: demandEvent.demandKwh,
         }),
       }),
@@ -97,13 +88,64 @@ describe('EnergyEventsConsumer event idempotency', () => {
     expect(mockMatchingService.runMatching).toHaveBeenCalledWith(demandEvent.correlationId);
   });
 
-  it('skips duplicate demand events', async () => {
+  it('treats a redelivered surplus event as already handled', async () => {
     const { consumer, mockPrisma, mockMatchingService } = buildMocks();
-    mockPrisma.buyRequest.findUnique.mockResolvedValue({ id: 'request-existing' });
+    mockPrisma.sellOffer.create.mockRejectedValue(uniqueViolation());
 
-    await consumer.handleEnergyEvent(demandEvent);
+    await expect(consumer.handleEnergyEvent(surplusEvent)).resolves.toBeUndefined();
 
-    expect(mockPrisma.buyRequest.create).not.toHaveBeenCalled();
     expect(mockMatchingService.runMatching).not.toHaveBeenCalled();
+  });
+
+  it('treats a redelivered demand event as already handled', async () => {
+    const { consumer, mockPrisma, mockMatchingService } = buildMocks();
+    mockPrisma.buyRequest.create.mockRejectedValue(uniqueViolation());
+
+    await expect(consumer.handleEnergyEvent(demandEvent)).resolves.toBeUndefined();
+
+    expect(mockMatchingService.runMatching).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a genuine database failure so the message is dead lettered', async () => {
+    const { consumer, mockPrisma, mockMatchingService } = buildMocks();
+    mockPrisma.sellOffer.create.mockRejectedValue(new Error('connection terminated'));
+
+    await expect(consumer.handleEnergyEvent(surplusEvent)).rejects.toThrow('connection terminated');
+
+    expect(mockMatchingService.runMatching).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed event without touching the database', async () => {
+    const { consumer, mockPrisma, mockMatchingService } = buildMocks();
+
+    const result = await consumer.handleEnergyEvent({
+      ...surplusEvent,
+      surplusKwh: undefined,
+    } as unknown as EnergySurplusDetectedEvent);
+
+    expect(result).toBeInstanceOf(Nack);
+    expect((result as Nack).requeue).toBe(false);
+    expect(mockPrisma.sellOffer.create).not.toHaveBeenCalled();
+    expect(mockMatchingService.runMatching).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateEnergyEvent', () => {
+  it('accepts well formed events', () => {
+    expect(validateEnergyEvent(surplusEvent)).toBeNull();
+    expect(validateEnergyEvent(demandEvent)).toBeNull();
+  });
+
+  it.each([
+    ['not an object', null],
+    ['missing eventId', { ...surplusEvent, eventId: '' }],
+    ['missing correlationId', { ...surplusEvent, correlationId: '  ' }],
+    ['missing householdId', { ...surplusEvent, householdId: undefined }],
+    ['unknown eventType', { ...surplusEvent, eventType: 'SomethingElse' }],
+    ['negative surplus', { ...surplusEvent, surplusKwh: -5 }],
+    ['non numeric demand', { ...demandEvent, demandKwh: 'lots' }],
+    ['infinite demand', { ...demandEvent, demandKwh: Number.POSITIVE_INFINITY }],
+  ])('rejects %s', (_label, event) => {
+    expect(validateEnergyEvent(event)).not.toBeNull();
   });
 });
