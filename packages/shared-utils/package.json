@@ -9,11 +9,8 @@
     "build:watch": "tsc -p tsconfig.json --watch",
     "clean": "rimraf dist"
   },
-  "dependencies": {
-    "uuid": "^9.0.0"
-  },
   "devDependencies": {
-    "@types/uuid": "^9.0.7",
+    "@types/node": "^24.10.1",
     "typescript": "^5.3.3",
     "rimraf": "^5.0.5"
   }

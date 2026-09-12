@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 
 const CORRELATION_ID_HEADER = 'x-correlation-id';
 
@@ -7,9 +7,5 @@ export function getOrGenerateCorrelationId(headers?: Record<string, string | str
     const value = headers[CORRELATION_ID_HEADER];
     if (value) return Array.isArray(value) ? value[0] : value;
   }
-  return uuidv4();
-}
-
-export function generateCorrelationId(): string {
-  return uuidv4();
+  return randomUUID();
 }
