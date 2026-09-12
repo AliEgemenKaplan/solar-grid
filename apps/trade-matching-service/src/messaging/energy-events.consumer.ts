@@ -51,8 +51,9 @@ export class EnergyEventsConsumer {
         await this.matchingService.runMatching(correlationId);
       }
     } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `Failed to process ${event.eventType} for ${event.householdId}: ${err.message} [cid=${correlationId}]`,
+        `Failed to process ${event.eventType} for ${event.householdId}: ${reason} [cid=${correlationId}]`,
       );
       // Re-throw to trigger NACK → dead letter queue after retries
       throw err;

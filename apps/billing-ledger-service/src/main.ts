@@ -4,12 +4,13 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
 import { randomUUID } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const logger = new Logger('Bootstrap');
 
-  app.use((req, res, next) => {
+  app.use((req: Request, res: Response, next: NextFunction) => {
     if (!req.headers[HEADER_CORRELATION_ID]) {
       req.headers[HEADER_CORRELATION_ID] = randomUUID();
     }

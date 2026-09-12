@@ -5,10 +5,10 @@ export class RecalculatePriceDto {
   @ApiProperty({ example: 50, description: 'Total supply in kWh across the neighborhood' })
   @IsNumber()
   @Min(0)
-  totalSupplyKwh: number;
+  totalSupplyKwh!: number;
 
   @ApiProperty({ example: 40, description: 'Total demand in kWh across the neighborhood' })
   @IsNumber()
   @Min(0)
-  totalDemandKwh: number;
+  totalDemandKwh!: number;
 }

@@ -46,8 +46,9 @@ export class MatchingService {
     try {
       priceResponse = await this.pricingClient.getCurrentPrice(correlationId);
     } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `Failed to fetch price, aborting matching: ${err.message} [cid=${correlationId}]`,
+        `Failed to fetch price, aborting matching: ${reason} [cid=${correlationId}]`,
       );
       return result;
     }
@@ -142,14 +143,13 @@ export class MatchingService {
             `Trade COMPLETED: ${tradeId} seller=${seller.householdId}(${newSellerKwh}kWh left) buyer=${buyer.householdId}(${newBuyerKwh}kWh left) [cid=${correlationId}]`,
           );
         } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
           await this.prisma.tradeMatch.update({
             where: { id: tradeMatch.id },
-            data: { status: 'FAILED', failureReason: err.message },
+            data: { status: 'FAILED', failureReason: reason },
           });
           result.failed++;
-          this.logger.error(
-            `Trade FAILED: ${tradeId} reason=${err.message} [cid=${correlationId}]`,
-          );
+          this.logger.error(`Trade FAILED: ${tradeId} reason=${reason} [cid=${correlationId}]`);
         }
       }
     }

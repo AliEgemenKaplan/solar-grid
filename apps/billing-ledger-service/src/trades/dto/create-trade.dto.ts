@@ -4,47 +4,47 @@ import { IsString, IsNumber, IsDateString, Min, IsPositive } from 'class-validat
 export class CreateTradeDto {
   @ApiProperty({ example: 'TRD-001' })
   @IsString()
-  tradeId: string;
+  tradeId!: string;
 
   @ApiProperty({ example: 'HH-SELLER-001' })
   @IsString()
-  sellerHouseholdId: string;
+  sellerHouseholdId!: string;
 
   @ApiProperty({ example: 'HH-BUYER-001' })
   @IsString()
-  buyerHouseholdId: string;
+  buyerHouseholdId!: string;
 
   @ApiProperty({ example: 4 })
   @IsNumber()
   @IsPositive()
-  energyKwh: number;
+  energyKwh!: number;
 
   @ApiProperty({ example: 4.75 })
   @IsNumber()
   @IsPositive()
-  pricePerKwh: number;
+  pricePerKwh!: number;
 
   @ApiProperty({ example: 19 })
   @IsNumber()
   @Min(0)
-  totalAmount: number;
+  totalAmount!: number;
 
   @ApiProperty({ example: 'TRY' })
   @IsString()
-  currency: string;
+  currency!: string;
 
   @ApiProperty({
     example: 'match-uuid-001',
     description: 'Unique key to prevent duplicate ledger entries',
   })
   @IsString()
-  idempotencyKey: string;
+  idempotencyKey!: string;
 
   @ApiProperty({ example: 'flow-uuid-001' })
   @IsString()
-  correlationId: string;
+  correlationId!: string;
 
   @ApiProperty({ example: '2026-05-27T10:10:00.000Z' })
   @IsDateString()
-  completedAt: string;
+  completedAt!: string;
 }
