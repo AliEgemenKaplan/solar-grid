@@ -1,3 +1,13 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+# pnpm 10 does not run dependency build scripts unless they are allowed here.
+# These need theirs: Prisma downloads/patches its query engines, Nest runs a
+# post-install step. Without this the install prints an "Ignored build scripts"
+# warning and engine availability depends on a later lazy download.
+onlyBuiltDependencies:
+  - '@nestjs/core'
+  - '@prisma/client'
+  - '@prisma/engines'
+  - prisma
