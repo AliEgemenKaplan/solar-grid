@@ -73,7 +73,7 @@ function buildMocks() {
 
 describe('MatchingService.runMatching - FIFO matching', () => {
   it('should match a seller and buyer and mark both as MATCHED when fully consumed', async () => {
-    const { service, mockPrisma, offerUpdate, requestUpdate, matchUpdate } = buildMocks();
+    const { service, mockPrisma, offerUpdate, requestUpdate } = buildMocks();
 
     mockPrisma.sellOffer.findMany.mockResolvedValue([mockSellOffer('s1', 'HH-SELLER', 4)]);
     mockPrisma.buyRequest.findMany.mockResolvedValue([mockBuyRequest('b1', 'HH-BUYER', 4)]);
