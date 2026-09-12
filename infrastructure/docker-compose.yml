@@ -1,13 +1,11 @@
-version: '3.8'
-
 services:
   # ─── Infrastructure ────────────────────────────────────────────────────────
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: solar-grid-rabbitmq
     ports:
-      - '5672:5672'
-      - '15672:15672'
+      - '127.0.0.1:${RABBITMQ_PORT:-5672}:5672'
+      - '127.0.0.1:${RABBITMQ_UI_PORT:-15672}:15672'
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
@@ -19,12 +17,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    restart: unless-stopped
 
   postgres-smart-meter:
     image: postgres:15-alpine
     container_name: solar-grid-postgres-smart-meter
-    ports:
-      - '5433:5432'
     environment:
       POSTGRES_DB: smart_meter_db
       POSTGRES_USER: postgres
@@ -36,12 +33,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   postgres-pricing:
     image: postgres:15-alpine
     container_name: solar-grid-postgres-pricing
-    ports:
-      - '5434:5432'
     environment:
       POSTGRES_DB: pricing_db
       POSTGRES_USER: postgres
@@ -53,12 +49,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   postgres-matching:
     image: postgres:15-alpine
     container_name: solar-grid-postgres-matching
-    ports:
-      - '5435:5432'
     environment:
       POSTGRES_DB: matching_db
       POSTGRES_USER: postgres
@@ -70,12 +65,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   postgres-ledger:
     image: postgres:15-alpine
     container_name: solar-grid-postgres-ledger
-    ports:
-      - '5436:5432'
     environment:
       POSTGRES_DB: ledger_db
       POSTGRES_USER: postgres
@@ -87,6 +81,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # ─── Application Services ──────────────────────────────────────────────────
   smart-meter-service:
@@ -95,7 +90,7 @@ services:
       dockerfile: apps/smart-meter-service/Dockerfile
     container_name: solar-grid-smart-meter
     ports:
-      - '3001:3001'
+      - '127.0.0.1:${SMART_METER_PORT:-3001}:3001'
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -114,7 +109,7 @@ services:
       dockerfile: apps/pricing-engine-service/Dockerfile
     container_name: solar-grid-pricing-engine
     ports:
-      - '3002:3002'
+      - '127.0.0.1:${PRICING_PORT:-3002}:3002'
     environment:
       NODE_ENV: production
       PORT: 3002
@@ -130,7 +125,7 @@ services:
       dockerfile: apps/billing-ledger-service/Dockerfile
     container_name: solar-grid-billing-ledger
     ports:
-      - '3004:3004'
+      - '127.0.0.1:${BILLING_PORT:-3004}:3004'
     environment:
       NODE_ENV: production
       PORT: 3004
@@ -146,7 +141,7 @@ services:
       dockerfile: apps/trade-matching-service/Dockerfile
     container_name: solar-grid-trade-matching
     ports:
-      - '3003:3003'
+      - '127.0.0.1:${TRADE_MATCHING_PORT:-3003}:3003'
     environment:
       NODE_ENV: production
       PORT: 3003

@@ -20,20 +20,18 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 
 ## Port Override Mode
 
-If local ports conflict, start Compose with the override file:
+If a default port collides with another stack, copy the example env file and
+change the value; there is no separate override compose file.
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml -f infrastructure/docker-compose.override.yml up -d --build
+cp infrastructure/.env.example infrastructure/.env
+docker compose -f infrastructure/docker-compose.yml up -d --build
 ```
 
-Then point the demo scripts at the remapped host ports:
+Then point the demo scripts at the ports you chose:
 
 ```bash
-SMART_METER_URL=http://localhost:13001 \
-PRICING_URL=http://localhost:13002 \
-MATCHING_URL=http://localhost:13003 \
-BILLING_URL=http://localhost:13004 \
-bash scripts/demo.sh
+SMART_METER_URL=http://localhost:13001 PRICING_URL=http://localhost:13002 MATCHING_URL=http://localhost:13003 BILLING_URL=http://localhost:13004 bash scripts/demo.sh
 ```
 
 PowerShell:

@@ -1,9 +1,12 @@
-FROM node:20-alpine
+FROM node:24-alpine
 
 # OpenSSL is required by the Prisma engines on Alpine (musl + OpenSSL 3.x)
 RUN apk add --no-cache openssl
 
-RUN npm install -g pnpm@10.32.1
+# pnpm version comes from package.json#packageManager, so the image and
+# the developer machine can never drift apart again.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
 WORKDIR /app
 

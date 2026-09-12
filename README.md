@@ -55,18 +55,20 @@ Communication patterns:
 ## Prerequisites
 
 - Docker and Docker Compose v2
-- Node.js >= 20
-- pnpm >= 8
+- Node.js >= 24 (see `.nvmrc`)
+- pnpm 10 — `corepack enable` picks the pinned version up from package.json
 
 ## Validation Commands
 
 Run these before the live demo:
 
 ```bash
-pnpm install
-pnpm prisma:generate
-pnpm build
+pnpm install --frozen-lockfile
+pnpm prisma:generate   # required before the first build: the Prisma client is generated, not committed
+pnpm lint
+pnpm typecheck
 pnpm test
+pnpm build
 docker compose -f infrastructure/docker-compose.yml up -d --build
 bash scripts/demo.sh
 ```
@@ -79,20 +81,20 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 
 ## Local Port Conflicts
 
-If the default ports conflict with another local project, use the override compose file:
+Every published port binds to `127.0.0.1` and can be remapped without editing
+the compose file. The PostgreSQL containers publish no host ports at all; use
+`docker compose exec` when you need a psql shell.
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml -f infrastructure/docker-compose.override.yml up -d --build
+cp infrastructure/.env.example infrastructure/.env
+# edit the ports that collide, then
+docker compose -f infrastructure/docker-compose.yml up -d --build
 ```
 
-Then run the demo with remapped host URLs:
+The demo scripts follow the same values:
 
 ```bash
-SMART_METER_URL=http://localhost:13001 \
-PRICING_URL=http://localhost:13002 \
-MATCHING_URL=http://localhost:13003 \
-BILLING_URL=http://localhost:13004 \
-bash scripts/demo.sh
+SMART_METER_URL=http://localhost:13001 PRICING_URL=http://localhost:13002 MATCHING_URL=http://localhost:13003 BILLING_URL=http://localhost:13004 bash scripts/demo.sh
 ```
 
 PowerShell:
@@ -160,7 +162,7 @@ SolarGrid/
     shared-utils/
   infrastructure/
     docker-compose.yml
-    docker-compose.override.yml
+    .env.example
   docs/
   scripts/
     demo.sh
