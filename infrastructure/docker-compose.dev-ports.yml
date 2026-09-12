@@ -1,0 +1,29 @@
+# Optional: publish the database ports on the loopback interface.
+#
+# The base compose file keeps PostgreSQL unreachable from the host, which is
+# the right default: nothing outside the compose network needs it, and the
+# containers use a superuser account. Running a service on your own machine
+# against the containerised databases does need them, so opt in explicitly:
+#
+#   docker compose -f infrastructure/docker-compose.yml \
+#                  -f infrastructure/docker-compose.dev-ports.yml up -d
+#
+# Ports bind to 127.0.0.1 only and can be remapped in infrastructure/.env
+# when they collide with another stack.
+
+services:
+  postgres-smart-meter:
+    ports:
+      - '127.0.0.1:${SMART_METER_DB_PORT:-5433}:5432'
+
+  postgres-pricing:
+    ports:
+      - '127.0.0.1:${PRICING_DB_PORT:-5434}:5432'
+
+  postgres-matching:
+    ports:
+      - '127.0.0.1:${TRADE_MATCHING_DB_PORT:-5435}:5432'
+
+  postgres-ledger:
+    ports:
+      - '127.0.0.1:${BILLING_DB_PORT:-5436}:5432'

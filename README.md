@@ -83,7 +83,9 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 
 Every published port binds to `127.0.0.1` and can be remapped without editing
 the compose file. The PostgreSQL containers publish no host ports at all; use
-`docker compose exec` when you need a psql shell.
+`docker compose exec postgres-smart-meter psql -U postgres smart_meter_db` for
+a shell, or start the stack with `infrastructure/docker-compose.dev-ports.yml`
+as a second `-f` argument when you want to reach a database from your machine.
 
 ```bash
 cp infrastructure/.env.example infrastructure/.env
