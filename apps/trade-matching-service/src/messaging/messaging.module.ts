@@ -12,7 +12,7 @@ import {
 
 @Module({
   imports: [
-    RabbitMQModule.forRootAsync(RabbitMQModule, {
+    RabbitMQModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         exchanges: [

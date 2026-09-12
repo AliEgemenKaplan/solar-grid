@@ -11,3 +11,14 @@ onlyBuiltDependencies:
   - '@prisma/client'
   - '@prisma/engines'
   - prisma
+
+# Transitive advisories that upstream has not shipped a release for yet.
+# qs: express@5 accepts ^6.14.0, so this is an in-range patch bump.
+# multer: @nestjs/platform-express pins 2.2.0 exactly. This service never
+# handles multipart uploads, so the package is dead weight on our paths, but
+# the advisory still shows up in audits. Drop both entries once
+# @nestjs/platform-express ships with the patched versions.
+overrides:
+  qs@<6.15.2: '>=6.15.2'
+  multer@<2.3.0: '>=2.3.0'
+

@@ -6,7 +6,7 @@ import { EXCHANGE_SOLAR_GRID_ENERGY } from '@solar-grid/shared-contracts';
 
 @Module({
   imports: [
-    RabbitMQModule.forRootAsync(RabbitMQModule, {
+    RabbitMQModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         exchanges: [
