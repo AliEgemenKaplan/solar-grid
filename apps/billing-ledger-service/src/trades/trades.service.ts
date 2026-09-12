@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTradeDto } from './dto/create-trade.dto';
+import { Prisma } from '../../generated/client';
 
 @Injectable()
 export class TradesService {
@@ -29,79 +30,98 @@ export class TradesService {
     );
 
     // Atomic transaction: trade record + ledger entries + idempotency key + balance updates
-    const trade = await this.prisma.$transaction(async (tx) => {
-      const completedTrade = await tx.completedTrade.create({
-        data: {
-          tradeId: dto.tradeId,
-          sellerHouseholdId: dto.sellerHouseholdId,
-          buyerHouseholdId: dto.buyerHouseholdId,
-          energyKwh: dto.energyKwh,
-          pricePerKwh: dto.pricePerKwh,
-          totalAmount: dto.totalAmount,
-          currency: dto.currency,
-          idempotencyKey: dto.idempotencyKey,
-          correlationId: dto.correlationId,
-          completedAt: new Date(dto.completedAt),
-        },
+    try {
+      const trade = await this.prisma.$transaction(async (tx) => {
+        const completedTrade = await tx.completedTrade.create({
+          data: {
+            tradeId: dto.tradeId,
+            sellerHouseholdId: dto.sellerHouseholdId,
+            buyerHouseholdId: dto.buyerHouseholdId,
+            energyKwh: dto.energyKwh,
+            pricePerKwh: dto.pricePerKwh,
+            totalAmount: dto.totalAmount,
+            currency: dto.currency,
+            idempotencyKey: dto.idempotencyKey,
+            correlationId: dto.correlationId,
+            completedAt: new Date(dto.completedAt),
+          },
+        });
+
+        await tx.idempotencyKey.create({
+          data: {
+            key: dto.idempotencyKey,
+            tradeId: dto.tradeId,
+          },
+        });
+
+        await tx.ledgerEntry.create({
+          data: {
+            tradeId: dto.tradeId,
+            householdId: dto.sellerHouseholdId,
+            entryType: 'CREDIT',
+            amount: dto.totalAmount,
+            currency: dto.currency,
+            correlationId: dto.correlationId,
+          },
+        });
+
+        await tx.ledgerEntry.create({
+          data: {
+            tradeId: dto.tradeId,
+            householdId: dto.buyerHouseholdId,
+            entryType: 'DEBIT',
+            amount: dto.totalAmount,
+            currency: dto.currency,
+            correlationId: dto.correlationId,
+          },
+        });
+
+        await tx.householdBalance.upsert({
+          where: { householdId: dto.sellerHouseholdId },
+          update: { balance: { increment: dto.totalAmount } },
+          create: {
+            householdId: dto.sellerHouseholdId,
+            balance: dto.totalAmount,
+            currency: dto.currency,
+          },
+        });
+
+        await tx.householdBalance.upsert({
+          where: { householdId: dto.buyerHouseholdId },
+          update: { balance: { decrement: dto.totalAmount } },
+          create: {
+            householdId: dto.buyerHouseholdId,
+            balance: -dto.totalAmount,
+            currency: dto.currency,
+          },
+        });
+
+        return completedTrade;
       });
 
-      await tx.idempotencyKey.create({
-        data: {
-          key: dto.idempotencyKey,
-          tradeId: dto.tradeId,
-        },
-      });
+      this.logger.log(
+        `Trade recorded successfully: tradeId=${dto.tradeId} seller+${dto.totalAmount} buyer-${dto.totalAmount} [cid=${dto.correlationId}]`,
+      );
 
-      await tx.ledgerEntry.create({
-        data: {
-          tradeId: dto.tradeId,
-          householdId: dto.sellerHouseholdId,
-          entryType: 'CREDIT',
-          amount: dto.totalAmount,
-          currency: dto.currency,
-          correlationId: dto.correlationId,
-        },
-      });
-
-      await tx.ledgerEntry.create({
-        data: {
-          tradeId: dto.tradeId,
-          householdId: dto.buyerHouseholdId,
-          entryType: 'DEBIT',
-          amount: dto.totalAmount,
-          currency: dto.currency,
-          correlationId: dto.correlationId,
-        },
-      });
-
-      await tx.householdBalance.upsert({
-        where: { householdId: dto.sellerHouseholdId },
-        update: { balance: { increment: dto.totalAmount } },
-        create: {
-          householdId: dto.sellerHouseholdId,
-          balance: dto.totalAmount,
-          currency: dto.currency,
-        },
-      });
-
-      await tx.householdBalance.upsert({
-        where: { householdId: dto.buyerHouseholdId },
-        update: { balance: { decrement: dto.totalAmount } },
-        create: {
-          householdId: dto.buyerHouseholdId,
-          balance: -dto.totalAmount,
-          currency: dto.currency,
-        },
-      });
-
-      return completedTrade;
-    });
-
-    this.logger.log(
-      `Trade recorded successfully: tradeId=${dto.tradeId} seller+${dto.totalAmount} buyer-${dto.totalAmount} [cid=${dto.correlationId}]`,
-    );
-
-    return { ...trade, duplicate: false };
+      return { ...trade, duplicate: false };
+    } catch (err) {
+      // Checking for the key before inserting leaves a gap: two requests
+      // carrying the same key can both pass the check. The unique index is
+      // what actually decides, so the request that loses the race reports the
+      // winner's trade instead of a 500.
+      if (isUniqueViolation(err)) {
+        const winner = await this.prisma.completedTrade.findUnique({
+          where: { tradeId: dto.tradeId },
+        });
+        if (winner) {
+          this.logger.warn(
+            `Concurrent duplicate trade resolved: idempotencyKey=${dto.idempotencyKey} tradeId=${dto.tradeId} [cid=${dto.correlationId}]`,
+          );
+          return { ...winner, duplicate: true };
+        }
+      }
+      throw err;
+    }
   }
 
   async getTradeById(tradeId: string) {
@@ -116,4 +136,8 @@ export class TradesService {
       orderBy: { completedAt: 'desc' },
     });
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
