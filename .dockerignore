@@ -1,9 +1,30 @@
+# Dependencies and build output (installed/built inside the image)
 **/node_modules
 **/dist
 **/generated
 **/coverage
+**/*.tsbuildinfo
+
+# Secrets and logs
 **/.env
-**/.DS_Store
-**/__MACOSX
-**/.git
 **/*.log
+
+# Not needed to build or run a service
+.git
+.github
+.gitignore
+.gitattributes
+.editorconfig
+.claude
+.playwright-mcp
+.pnpm-store
+docs
+scripts
+infrastructure
+**/test
+**/*.md
+
+# OS generated
+**/.DS_Store
+**/Thumbs.db
+**/__MACOSX
