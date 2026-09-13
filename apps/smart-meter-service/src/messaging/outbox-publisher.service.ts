@@ -1,12 +1,26 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { ConfigService } from '@nestjs/config';
+import type { ConfirmChannel, ConsumeMessage } from 'amqplib';
 import { EXCHANGE_SOLAR_GRID_ENERGY, HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
 import { PrismaService } from '../prisma/prisma.service';
 
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_PUBLISH_TIMEOUT_MS = 5000;
 const BATCH_SIZE = 50;
+
+interface PendingEvent {
+  id: string;
+  eventId: string;
+  eventType: string;
+  routingKey: string;
+  payload: unknown;
+  correlationId: string;
+  attempts: number;
+}
+
+/** Why a publish did not happen, which decides whether to keep draining. */
+type PublishFailure = 'unroutable' | 'broker';
 
 /**
  * Moves events from the outbox table to RabbitMQ.
@@ -15,6 +29,15 @@ const BATCH_SIZE = 50;
  * broker may be behind the database but the two can never disagree. This
  * publisher is the only thing that talks to the exchange, and it is safe for
  * it to publish the same event twice: consumers deduplicate on eventId.
+ *
+ * Three failure modes are handled explicitly:
+ *
+ * - the broker is unreachable: the row stays pending and the next pass retries
+ * - the broker accepts nothing because no queue is bound: the broker returns
+ *   the message, the row stays pending, and it publishes itself once a
+ *   consumer has declared its queue
+ * - the process dies between publishing and marking the row: the event is
+ *   published again later, and the consumer ignores the duplicate
  */
 @Injectable()
 export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
@@ -23,6 +46,8 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   private readonly publishTimeoutMs: number;
   private timer?: NodeJS.Timeout;
   private draining = false;
+  /** Message ids the broker handed back because nothing was bound to route them. */
+  private readonly returned = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -37,7 +62,20 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    // A mandatory message that cannot be routed comes back on this event
+    // rather than disappearing. Registered through addSetup so it survives a
+    // reconnect, which creates a new channel.
+    await this.amqp.managedChannel.addSetup(async (channel: ConfirmChannel) => {
+      channel.on('return', (message: ConsumeMessage) => {
+        const messageId = message.properties.messageId as string | undefined;
+        if (messageId) this.returned.add(messageId);
+        this.logger.error(
+          `Broker returned an unroutable message: eventId=${messageId ?? 'unknown'} routingKey=${message.fields.routingKey}`,
+        );
+      });
+    });
+
     this.timer = setInterval(() => void this.drain(), this.pollIntervalMs);
     // Do not hold the process open just for the poll timer.
     this.timer.unref();
@@ -63,11 +101,15 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
 
       let published = 0;
       for (const event of pending) {
-        const ok = await this.publishOne(event);
-        // A failure here means the broker is unreachable; the next tick
-        // retries from the same place rather than hammering it now.
-        if (!ok) break;
-        published++;
+        const failure = await this.publishOne(event);
+        if (!failure) {
+          published++;
+          continue;
+        }
+        // An unroutable event is this event's problem; the ones behind it may
+        // route perfectly well. An unreachable broker is everyone's problem,
+        // so stop and let the next tick try again.
+        if (failure === 'broker') break;
       }
       return published;
     } catch (err) {
@@ -78,14 +120,9 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async publishOne(event: {
-    id: string;
-    eventId: string;
-    eventType: string;
-    routingKey: string;
-    payload: unknown;
-    correlationId: string;
-  }): Promise<boolean> {
+  private async publishOne(event: PendingEvent): Promise<PublishFailure | null> {
+    const envelope = (event.payload ?? {}) as Record<string, unknown>;
+
     try {
       await this.withDeadline(
         this.amqp.publish(EXCHANGE_SOLAR_GRID_ENERGY, event.routingKey, event.payload, {
@@ -93,9 +130,26 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
           correlationId: event.correlationId,
           type: event.eventType,
           contentType: 'application/json',
-          headers: { [HEADER_CORRELATION_ID]: event.correlationId },
+          persistent: true,
+          // Tell us when nothing is bound instead of dropping the message.
+          mandatory: true,
+          headers: {
+            [HEADER_CORRELATION_ID]: event.correlationId,
+            'x-event-version': envelope.version ?? null,
+            'x-source-event-id': envelope.sourceEventId ?? null,
+          },
         }),
       );
+
+      // The broker returns an unroutable message before it confirms it, so by
+      // the time the publish resolves we know which it was.
+      if (this.returned.delete(event.eventId)) {
+        await this.recordFailure(
+          event,
+          `no queue is bound for ${event.routingKey}; the broker returned the message`,
+        );
+        return 'unroutable';
+      }
 
       await this.prisma.outboxEvent.update({
         where: { id: event.id },
@@ -103,20 +157,23 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.logger.log(
-        `Published ${event.eventType}: eventId=${event.eventId} [cid=${event.correlationId}]`,
+        `Published ${event.eventType}: eventId=${event.eventId} sourceEventId=${String(envelope.sourceEventId ?? '-')} [cid=${event.correlationId}]`,
       );
-      return true;
+      return null;
     } catch (err) {
-      const reason = describe(err);
-      await this.prisma.outboxEvent.update({
-        where: { id: event.id },
-        data: { attempts: { increment: 1 }, lastError: reason },
-      });
-      this.logger.warn(
-        `Outbox publish failed, event stays pending: eventId=${event.eventId} reason=${reason} [cid=${event.correlationId}]`,
-      );
-      return false;
+      await this.recordFailure(event, describe(err));
+      return 'broker';
     }
+  }
+
+  private async recordFailure(event: PendingEvent, reason: string): Promise<void> {
+    await this.prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: { attempts: { increment: 1 }, lastError: reason },
+    });
+    this.logger.warn(
+      `Outbox publish failed, event stays pending: eventId=${event.eventId} attempts=${event.attempts + 1} reason=${reason} [cid=${event.correlationId}]`,
+    );
   }
 
   /**
