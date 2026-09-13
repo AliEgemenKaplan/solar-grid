@@ -139,7 +139,13 @@ describe('smart meter outbox', () => {
       return prisma.outboxEvent.findFirstOrThrow();
     }
 
-    async function buildPublisher(uri: string, wait_: boolean, publishTimeoutMs: number) {
+    async function buildPublisher(
+      uri: string,
+      wait_: boolean,
+      publishTimeoutMs: number,
+      options: { bindConsumerQueue?: boolean } = {},
+    ) {
+      const { bindConsumerQueue = true } = options;
       const moduleRef = await Test.createTestingModule({
         imports: [
           RabbitMQModule.forRoot({
@@ -149,14 +155,16 @@ describe('smart meter outbox', () => {
             exchanges: [
               { name: EXCHANGE_SOLAR_GRID_ENERGY, type: 'topic', options: { durable: true } },
             ],
-            queues: [
-              {
-                name: TEST_QUEUE,
-                options: { durable: true },
-                exchange: EXCHANGE_SOLAR_GRID_ENERGY,
-                routingKey: '#',
-              },
-            ],
+            queues: bindConsumerQueue
+              ? [
+                  {
+                    name: TEST_QUEUE,
+                    options: { durable: true },
+                    exchange: EXCHANGE_SOLAR_GRID_ENERGY,
+                    routingKey: '#',
+                  },
+                ]
+              : [],
             defaultPublishOptions: { persistent: true, contentType: 'application/json' },
           }),
         ],
@@ -198,6 +206,62 @@ describe('smart meter outbox', () => {
       }
     });
 
+    it('keeps an event pending when the broker has nowhere to route it', async () => {
+      const event = await seedPendingEvent();
+      const rabbit: StartedRabbitMQContainer = await new RabbitMQContainer(
+        'rabbitmq:3.12-management-alpine',
+      ).start();
+      // A broker that is up and healthy, but with no queue bound to the
+      // exchange - the state the system is in before the consumer first
+      // starts. Without the mandatory flag the broker would accept this
+      // message and drop it on the floor.
+      const app = await buildPublisher(rabbit.getAmqpUrl(), true, 10_000, {
+        bindConsumerQueue: false,
+      });
+
+      try {
+        expect(await app.get(OutboxPublisherService).drain()).toBe(0);
+
+        const stillPending = await prisma.outboxEvent.findUniqueOrThrow({
+          where: { id: event.id },
+        });
+        expect(stillPending.status).toBe('PENDING');
+        expect(stillPending.attempts).toBe(1);
+        expect(stillPending.lastError).toContain('no queue is bound');
+      } finally {
+        await app.close();
+        await rabbit.stop();
+      }
+    });
+
+    it('publishes an event that was unroutable once a consumer declares its queue', async () => {
+      const event = await seedPendingEvent();
+      const rabbit: StartedRabbitMQContainer = await new RabbitMQContainer(
+        'rabbitmq:3.12-management-alpine',
+      ).start();
+
+      const withoutConsumer = await buildPublisher(rabbit.getAmqpUrl(), true, 10_000, {
+        bindConsumerQueue: false,
+      });
+      try {
+        expect(await withoutConsumer.get(OutboxPublisherService).drain()).toBe(0);
+      } finally {
+        await withoutConsumer.close();
+      }
+
+      // The consumer starts and declares its queue; the same event now has
+      // somewhere to go, with no intervention.
+      const withConsumer = await buildPublisher(rabbit.getAmqpUrl(), true, 10_000);
+      try {
+        expect(await withConsumer.get(OutboxPublisherService).drain()).toBe(1);
+        const published = await prisma.outboxEvent.findUniqueOrThrow({ where: { id: event.id } });
+        expect(published.status).toBe('PUBLISHED');
+      } finally {
+        await withConsumer.close();
+        await rabbit.stop();
+      }
+    });
+
     it('publishes the pending event once a broker is available, and marks it persistent', async () => {
       const event = await seedPendingEvent();
       const rabbit: StartedRabbitMQContainer = await new RabbitMQContainer(
@@ -230,11 +294,17 @@ describe('smart meter outbox', () => {
         expect(message.properties.correlationId).toBe('cid-publish');
         expect(message.properties.type).toBe('EnergySurplusDetected');
         expect(message.properties.headers?.[HEADER_CORRELATION_ID]).toBe('cid-publish');
+        expect(message.properties.headers?.['x-event-version']).toBe(1);
+        expect(message.properties.headers?.['x-source-event-id']).toEqual(expect.any(String));
         expect(message.fields.routingKey).toBe(ROUTING_KEY_SURPLUS_DETECTED);
         expect(JSON.parse(message.content.toString())).toMatchObject({
           eventId: event.eventId,
           householdId: 'HH-SELLER',
           surplusKwh: '7.000',
+          // Envelope metadata rides along with the domain fields.
+          version: 1,
+          occurredAt: expect.any(String),
+          sourceEventId: expect.any(String),
         });
 
         // Draining again must not republish what is already published.

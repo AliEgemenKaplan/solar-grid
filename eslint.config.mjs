@@ -19,7 +19,13 @@ export default tseslint.config(
       '@typescript-eslint/no-empty-function': ['error', { allow: ['constructors'] }],
       '@typescript-eslint/no-unused-vars': [
         'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          // `const { a, b, ...rest } = obj` is how you omit properties; the
+          // named ones are the point, not an oversight.
+          ignoreRestSiblings: true,
+        },
       ],
     },
   },
