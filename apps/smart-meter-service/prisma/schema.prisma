@@ -9,18 +9,23 @@ generator client {
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
+// Energy is stored as Decimal(12, 3): three decimals is one watt hour, finer
+// than any household meter reports, and exact arithmetic keeps the numbers
+// from drifting once they are multiplied by a price downstream.
+
 model MeterReading {
   id             String       @id @default(cuid())
   householdId    String
-  productionKwh  Float
-  consumptionKwh Float
-  netKwh         Float
+  productionKwh  Decimal      @db.Decimal(12, 3)
+  consumptionKwh Decimal      @db.Decimal(12, 3)
+  netKwh         Decimal      @db.Decimal(12, 3)
   status         EnergyStatus
   timestamp      DateTime
   createdAt      DateTime     @default(now())
 
+  // A meter reports one reading per household per timestamp. This index also
+  // serves "readings for this household, newest first".
   @@unique([householdId, timestamp])
-  @@index([householdId])
   @@map("meter_readings")
 }
 
@@ -28,8 +33,11 @@ model HouseholdEnergyStatus {
   id                String       @id @default(cuid())
   householdId       String       @unique
   currentStatus     EnergyStatus
-  currentSurplusKwh Float        @default(0)
-  currentDemandKwh  Float        @default(0)
+  currentSurplusKwh Decimal      @default(0) @db.Decimal(12, 3)
+  currentDemandKwh  Decimal      @default(0) @db.Decimal(12, 3)
+  /// Timestamp of the reading this status came from, so a reading that
+  /// arrives late cannot overwrite a newer one.
+  lastReadingAt     DateTime
   updatedAt         DateTime     @updatedAt
 
   @@map("household_energy_status")
@@ -51,6 +59,7 @@ model OutboxEvent {
   createdAt     DateTime     @default(now())
   publishedAt   DateTime?
 
+  // The publisher scans pending rows oldest first.
   @@index([status, createdAt])
   @@map("outbox_events")
 }

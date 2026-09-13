@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatEnergy } from '@solar-grid/shared-utils';
 
 @Injectable()
 export class HouseholdsService {
@@ -14,6 +15,14 @@ export class HouseholdsService {
     if (!status) {
       throw new NotFoundException(`No status found for household ${householdId}`);
     }
-    return status;
+    return {
+      id: status.id,
+      householdId: status.householdId,
+      currentStatus: status.currentStatus,
+      currentSurplusKwh: formatEnergy(status.currentSurplusKwh),
+      currentDemandKwh: formatEnergy(status.currentDemandKwh),
+      lastReadingAt: status.lastReadingAt.toISOString(),
+      updatedAt: status.updatedAt.toISOString(),
+    };
   }
 }

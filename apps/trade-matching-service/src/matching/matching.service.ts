@@ -2,9 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingClient } from '../clients/pricing.client';
 import { BillingClient, BillingRejectedError } from '../clients/billing.client';
-import { generateTradeId, roundToDecimals } from '@solar-grid/shared-utils';
-import { ENERGY_EPSILON, PlannedTrade, planTrades } from './matching.planner';
-import type { Prisma, TradeMatch } from '../../generated/client';
+import Decimal from 'decimal.js';
+import {
+  DecimalLike,
+  formatEnergy,
+  formatMoney,
+  formatPrice,
+  generateTradeId,
+  MONEY_SCALE,
+} from '@solar-grid/shared-utils';
+import { PlannedTrade, planTrades } from './matching.planner';
+import type { Prisma, SellOffer, BuyRequest, TradeMatch } from '../../generated/client';
 
 export interface MatchResult {
   matched: number;
@@ -126,11 +134,14 @@ export class MatchingService {
    */
   private async reserve(
     planned: PlannedTrade,
-    price: { pricePerKwh: number; currency: string },
+    price: { pricePerKwh: string; currency: string },
     correlationId: string,
   ): Promise<TradeMatch | null> {
     const tradeId = generateTradeId();
-    const totalAmount = roundToDecimals(planned.energyKwh * price.pricePerKwh, 2);
+    // Exact decimal arithmetic, rounded once to the scale the column stores.
+    const totalAmount = new Decimal(planned.energyKwh)
+      .mul(price.pricePerKwh)
+      .toFixed(MONEY_SCALE, Decimal.ROUND_HALF_UP);
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -202,9 +213,9 @@ export class MatchingService {
         tradeId: match.tradeId,
         sellerHouseholdId: match.sellerHouseholdId,
         buyerHouseholdId: match.buyerHouseholdId,
-        energyKwh: match.energyKwh,
-        pricePerKwh: match.pricePerKwh,
-        totalAmount: match.totalAmount,
+        energyKwh: formatEnergy(match.energyKwh),
+        pricePerKwh: formatPrice(match.pricePerKwh),
+        totalAmount: formatMoney(match.totalAmount),
         currency: match.currency,
         idempotencyKey: match.idempotencyKey,
         correlationId: match.correlationId,
@@ -324,21 +335,80 @@ export class MatchingService {
   }
 
   async getMatches() {
-    return this.prisma.tradeMatch.findMany({ orderBy: { createdAt: 'desc' } });
+    const matches = await this.prisma.tradeMatch.findMany({ orderBy: { createdAt: 'desc' } });
+    return matches.map(toTradeResponse);
   }
 
   async getMatchByTradeId(tradeId: string) {
-    return this.prisma.tradeMatch.findUnique({ where: { tradeId } });
+    const match = await this.prisma.tradeMatch.findUnique({ where: { tradeId } });
+    return match ? toTradeResponse(match) : null;
   }
 }
 
-/** OPEN, PARTIALLY_MATCHED and MATCHED are just views of how much is left. */
+/** Money and energy leave this service as fixed-scale decimal strings. */
+export function toTradeResponse(match: TradeMatch) {
+  return {
+    id: match.id,
+    tradeId: match.tradeId,
+    sellerHouseholdId: match.sellerHouseholdId,
+    buyerHouseholdId: match.buyerHouseholdId,
+    energyKwh: formatEnergy(match.energyKwh),
+    pricePerKwh: formatPrice(match.pricePerKwh),
+    totalAmount: formatMoney(match.totalAmount),
+    currency: match.currency,
+    status: match.status,
+    billingTradeId: match.billingTradeId,
+    offerId: match.offerId,
+    requestId: match.requestId,
+    idempotencyKey: match.idempotencyKey,
+    billingAttempts: match.billingAttempts,
+    correlationId: match.correlationId,
+    failureReason: match.failureReason,
+    createdAt: match.createdAt.toISOString(),
+    updatedAt: match.updatedAt.toISOString(),
+  };
+}
+
+export function toOfferResponse(offer: SellOffer) {
+  return {
+    id: offer.id,
+    householdId: offer.householdId,
+    sourceEventId: offer.sourceEventId,
+    availableKwh: formatEnergy(offer.availableKwh),
+    originalKwh: formatEnergy(offer.originalKwh),
+    status: offer.status,
+    correlationId: offer.correlationId,
+    createdAt: offer.createdAt.toISOString(),
+    updatedAt: offer.updatedAt.toISOString(),
+  };
+}
+
+export function toRequestResponse(request: BuyRequest) {
+  return {
+    id: request.id,
+    householdId: request.householdId,
+    sourceEventId: request.sourceEventId,
+    requestedKwh: formatEnergy(request.requestedKwh),
+    originalKwh: formatEnergy(request.originalKwh),
+    status: request.status,
+    correlationId: request.correlationId,
+    createdAt: request.createdAt.toISOString(),
+    updatedAt: request.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * OPEN, PARTIALLY_MATCHED and MATCHED are just views of how much is left.
+ * With decimal amounts these are exact comparisons; the old float version
+ * needed an epsilon to decide whether 1e-17 kWh counted as exhausted.
+ */
 function statusFor(
-  remainingKwh: number,
-  originalKwh: number,
+  remainingKwh: DecimalLike,
+  originalKwh: DecimalLike,
 ): 'OPEN' | 'PARTIALLY_MATCHED' | 'MATCHED' {
-  if (remainingKwh <= ENERGY_EPSILON) return 'MATCHED';
-  if (remainingKwh >= originalKwh - ENERGY_EPSILON) return 'OPEN';
+  const remaining = new Decimal(String(remainingKwh));
+  if (remaining.lte(0)) return 'MATCHED';
+  if (remaining.gte(String(originalKwh))) return 'OPEN';
   return 'PARTIALLY_MATCHED';
 }
 

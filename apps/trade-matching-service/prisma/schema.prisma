@@ -9,18 +9,25 @@ generator client {
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
-model SellOffer {
-  id            String      @id @default(cuid())
-  householdId   String
-  sourceEventId String?     @unique
-  availableKwh  Float
-  originalKwh   Float
-  status        OfferStatus @default(OPEN)
-  correlationId String
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+// Energy is Decimal(12, 3), prices Decimal(10, 4) and money Decimal(14, 2).
+// Reserving energy subtracts from a running balance over and over, which is
+// precisely where binary floating point leaves dust behind.
 
-  @@index([status])
+model SellOffer {
+  id            String       @id @default(cuid())
+  householdId   String
+  sourceEventId String?      @unique
+  availableKwh  Decimal      @db.Decimal(12, 3)
+  originalKwh   Decimal      @db.Decimal(12, 3)
+  status        OfferStatus  @default(OPEN)
+  correlationId String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  trades        TradeMatch[]
+
+  // Matching scans open offers oldest first.
+  @@index([status, createdAt])
   @@index([householdId])
   @@map("sell_offers")
 }
@@ -29,14 +36,17 @@ model BuyRequest {
   id            String        @id @default(cuid())
   householdId   String
   sourceEventId String?       @unique
-  requestedKwh  Float
-  originalKwh   Float
+  requestedKwh  Decimal       @db.Decimal(12, 3)
+  originalKwh   Decimal       @db.Decimal(12, 3)
   status        RequestStatus @default(OPEN)
   correlationId String
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  @@index([status])
+  trades        TradeMatch[]
+
+  // Matching scans open requests oldest first.
+  @@index([status, createdAt])
   @@index([householdId])
   @@map("buy_requests")
 }
@@ -46,9 +56,9 @@ model TradeMatch {
   tradeId           String      @unique
   sellerHouseholdId String
   buyerHouseholdId  String
-  energyKwh         Float
-  pricePerKwh       Float
-  totalAmount       Float
+  energyKwh         Decimal     @db.Decimal(12, 3)
+  pricePerKwh       Decimal     @db.Decimal(10, 4)
+  totalAmount       Decimal     @db.Decimal(14, 2)
   currency          String
   status            TradeStatus @default(PENDING_BILLING)
   billingTradeId    String?
@@ -63,7 +73,16 @@ model TradeMatch {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
+  // A trade cannot reserve energy from an offer or request that is not there.
+  offer             SellOffer   @relation(fields: [offerId], references: [id])
+  request           BuyRequest  @relation(fields: [requestId], references: [id])
+
+  // Settlement picks up unconfirmed trades oldest first.
   @@index([status, createdAt])
+  @@index([offerId])
+  @@index([requestId])
+  // Tracing one reading through to its trades.
+  @@index([correlationId])
   @@map("trade_matches")
 }
 

@@ -11,6 +11,7 @@ import {
   ROUTING_KEY_DLQ,
   ROUTING_KEY_SURPLUS_DETECTED,
 } from '@solar-grid/shared-contracts';
+import { isDecimalWithin } from '@solar-grid/shared-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { MatchingService } from '../matching/matching.service';
 import { Prisma } from '../../generated/client';
@@ -150,12 +151,12 @@ export function validateEnergyEvent(event: unknown): string | null {
 
   if (candidate.eventType === 'EnergySurplusDetected') {
     const surplus = (candidate as Partial<EnergySurplusDetectedEvent>).surplusKwh;
-    return isPositiveNumber(surplus) ? null : 'surplusKwh must be a positive number';
+    return isPositiveEnergy(surplus) ? null : 'surplusKwh must be a positive decimal amount';
   }
 
   if (candidate.eventType === 'EnergyDemandDetected') {
     const demand = (candidate as Partial<EnergyDemandDetectedEvent>).demandKwh;
-    return isPositiveNumber(demand) ? null : 'demandKwh must be a positive number';
+    return isPositiveEnergy(demand) ? null : 'demandKwh must be a positive decimal amount';
   }
 
   return `unknown eventType: ${String(candidate.eventType)}`;
@@ -165,8 +166,14 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function isPositiveNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+/**
+ * Energy arrives as a decimal string. Numbers are still accepted so an older
+ * producer, or a hand-crafted message, is not rejected for the wrong reason.
+ */
+function isPositiveEnergy(value: unknown): boolean {
+  if (typeof value !== 'string' && typeof value !== 'number') return false;
+  if (typeof value === 'string' && value.trim().length === 0) return false;
+  return isDecimalWithin(value, '0.001', '1000000000');
 }
 
 function isDuplicateEvent(err: unknown): boolean {

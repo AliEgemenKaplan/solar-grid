@@ -38,4 +38,6 @@ RUN cd apps/smart-meter-service && npx prisma generate && pnpm build
 
 WORKDIR /app/apps/smart-meter-service
 EXPOSE 3001
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/main.js"]
+# Migrations are applied from committed SQL, never generated from the
+# schema at boot. exec hands PID 1 to node so signals reach it.
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/main.js"]

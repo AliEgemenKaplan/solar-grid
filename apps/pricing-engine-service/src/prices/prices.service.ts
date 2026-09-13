@@ -1,8 +1,23 @@
-import { Injectable, Logger, OnModuleInit, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecalculatePriceDto } from './dto/recalculate-price.dto';
 import { PriceResponseDto } from '@solar-grid/shared-contracts';
-import { clamp, roundToDecimals } from '@solar-grid/shared-utils';
+import { DecimalLike, formatEnergy, formatPrice, PRICE_SCALE } from '@solar-grid/shared-utils';
+import { PriceSnapshot } from '../../generated/client';
+
+export interface PricingBand {
+  basePrice: DecimalLike;
+  minPrice: DecimalLike;
+  maxPrice: DecimalLike;
+}
+
+const DEFAULT_RULE = {
+  basePrice: '4.0000',
+  minPrice: '2.5000',
+  maxPrice: '7.0000',
+  currency: 'TRY',
+};
 
 @Injectable()
 export class PricesService implements OnModuleInit {
@@ -18,26 +33,32 @@ export class PricesService implements OnModuleInit {
     const count = await this.prisma.pricingRule.count({ where: { isActive: true } });
     if (count === 0) {
       await this.prisma.pricingRule.create({
-        data: {
-          basePrice: 4.0,
-          minPrice: 2.5,
-          maxPrice: 7.0,
-          currency: 'TRY',
-          isActive: true,
-        },
+        data: { ...DEFAULT_RULE, isActive: true },
       });
-      this.logger.log('Seeded default pricing rule: base=4.00 min=2.50 max=7.00 TRY/kWh');
+      this.logger.log(
+        `Seeded default pricing rule: base=${DEFAULT_RULE.basePrice} min=${DEFAULT_RULE.minPrice} max=${DEFAULT_RULE.maxPrice} ${DEFAULT_RULE.currency}/kWh`,
+      );
     }
   }
 
+  /**
+   * price = clamp(basePrice * demand / max(supply, 1), minPrice, maxPrice)
+   *
+   * The division is the reason this is decimal arithmetic rather than floats:
+   * the result is rounded once, deliberately, to the scale the price column
+   * stores, instead of carrying a binary approximation around.
+   */
   static calculatePrice(
-    totalSupplyKwh: number,
-    totalDemandKwh: number,
-    rule: { basePrice: number; minPrice: number; maxPrice: number },
-  ): number {
-    const supplyDemandFactor = totalDemandKwh / Math.max(totalSupplyKwh, 1);
-    const rawPrice = rule.basePrice * supplyDemandFactor;
-    return roundToDecimals(clamp(rawPrice, rule.minPrice, rule.maxPrice), 4);
+    totalSupplyKwh: DecimalLike,
+    totalDemandKwh: DecimalLike,
+    rule: PricingBand,
+  ): string {
+    const supply = Decimal.max(new Decimal(String(totalSupplyKwh)), 1);
+    const demand = new Decimal(String(totalDemandKwh));
+    const raw = new Decimal(String(rule.basePrice)).mul(demand).div(supply);
+
+    const clamped = raw.clamp(String(rule.minPrice), String(rule.maxPrice));
+    return clamped.toFixed(PRICE_SCALE, Decimal.ROUND_HALF_UP);
   }
 
   async getCurrentPrice(): Promise<PriceResponseDto> {
@@ -45,24 +66,18 @@ export class PricesService implements OnModuleInit {
       orderBy: { createdAt: 'desc' },
     });
 
-    const rule = await this.getActiveRule();
-
-    if (!snapshot) {
-      return {
-        pricePerKwh: rule.basePrice,
-        currency: rule.currency,
-        calculatedAt: new Date().toISOString(),
-        supplyKwh: 0,
-        demandKwh: 0,
-      };
+    if (snapshot) {
+      return toPriceResponse(snapshot);
     }
 
+    // No trading has happened yet, so the band's base price is the price.
+    const rule = await this.getActiveRule();
     return {
-      pricePerKwh: snapshot.calculatedPrice,
-      currency: snapshot.currency,
-      calculatedAt: snapshot.createdAt.toISOString(),
-      supplyKwh: snapshot.totalSupplyKwh,
-      demandKwh: snapshot.totalDemandKwh,
+      pricePerKwh: formatPrice(rule.basePrice),
+      currency: rule.currency,
+      calculatedAt: new Date().toISOString(),
+      supplyKwh: formatEnergy(0),
+      demandKwh: formatEnergy(0),
     };
   }
 
@@ -72,8 +87,8 @@ export class PricesService implements OnModuleInit {
 
     const snapshot = await this.prisma.priceSnapshot.create({
       data: {
-        totalSupplyKwh: dto.totalSupplyKwh,
-        totalDemandKwh: dto.totalDemandKwh,
+        totalSupplyKwh: formatEnergy(dto.totalSupplyKwh),
+        totalDemandKwh: formatEnergy(dto.totalDemandKwh),
         calculatedPrice: price,
         currency: rule.currency,
       },
@@ -83,20 +98,22 @@ export class PricesService implements OnModuleInit {
       `Price recalculated: supply=${dto.totalSupplyKwh} demand=${dto.totalDemandKwh} price=${price} ${rule.currency}`,
     );
 
-    return {
-      pricePerKwh: snapshot.calculatedPrice,
-      currency: snapshot.currency,
-      calculatedAt: snapshot.createdAt.toISOString(),
-      supplyKwh: snapshot.totalSupplyKwh,
-      demandKwh: snapshot.totalDemandKwh,
-    };
+    return toPriceResponse(snapshot);
   }
 
   async getPriceHistory(limit = 50) {
-    return this.prisma.priceSnapshot.findMany({
+    const snapshots = await this.prisma.priceSnapshot.findMany({
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
+    return snapshots.map((snapshot) => ({
+      id: snapshot.id,
+      totalSupplyKwh: formatEnergy(snapshot.totalSupplyKwh),
+      totalDemandKwh: formatEnergy(snapshot.totalDemandKwh),
+      calculatedPrice: formatPrice(snapshot.calculatedPrice),
+      currency: snapshot.currency,
+      createdAt: snapshot.createdAt.toISOString(),
+    }));
   }
 
   private async getActiveRule() {
@@ -104,4 +121,14 @@ export class PricesService implements OnModuleInit {
     if (!rule) throw new NotFoundException('No active pricing rule found');
     return rule;
   }
+}
+
+function toPriceResponse(snapshot: PriceSnapshot): PriceResponseDto {
+  return {
+    pricePerKwh: formatPrice(snapshot.calculatedPrice),
+    currency: snapshot.currency,
+    calculatedAt: snapshot.createdAt.toISOString(),
+    supplyKwh: formatEnergy(snapshot.totalSupplyKwh),
+    demandKwh: formatEnergy(snapshot.totalDemandKwh),
+  };
 }

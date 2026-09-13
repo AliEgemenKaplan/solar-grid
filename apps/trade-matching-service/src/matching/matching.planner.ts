@@ -1,3 +1,6 @@
+import Decimal from 'decimal.js';
+import { DecimalLike, formatEnergy } from '@solar-grid/shared-utils';
+
 /**
  * The matching algorithm, with no database and no network in sight.
  *
@@ -5,21 +8,22 @@
  * open, which trades should we attempt? Everything about reserving energy,
  * billing and compensation lives in MatchingService, so the rules here can be
  * tested directly.
+ *
+ * Amounts are decimals throughout. Subtracting a running balance over and
+ * over is exactly where binary floating point leaves dust behind, which used
+ * to force an epsilon comparison; with decimals, exhausted means zero.
  */
-
-/** Two floats that differ by less than this are the same amount of energy. */
-export const ENERGY_EPSILON = 1e-9;
 
 export interface OfferSnapshot {
   id: string;
   householdId: string;
-  availableKwh: number;
+  availableKwh: DecimalLike;
 }
 
 export interface RequestSnapshot {
   id: string;
   householdId: string;
-  requestedKwh: number;
+  requestedKwh: DecimalLike;
 }
 
 export interface PlannedTrade {
@@ -27,7 +31,8 @@ export interface PlannedTrade {
   requestId: string;
   sellerHouseholdId: string;
   buyerHouseholdId: string;
-  energyKwh: number;
+  /** kWh, fixed-scale decimal string. */
+  energyKwh: string;
 }
 
 export interface MatchPlan {
@@ -42,33 +47,39 @@ export interface MatchPlan {
  * Callers pass both sides oldest-first; that ordering is the FIFO guarantee.
  */
 export function planTrades(offers: OfferSnapshot[], requests: RequestSnapshot[]): MatchPlan {
-  const remainingOffers = offers.map((offer) => ({ ...offer }));
-  const remainingRequests = requests.map((request) => ({ ...request }));
+  const remainingOffers = offers.map((offer) => ({
+    ...offer,
+    remaining: new Decimal(String(offer.availableKwh)),
+  }));
+  const remainingRequests = requests.map((request) => ({
+    ...request,
+    remaining: new Decimal(String(request.requestedKwh)),
+  }));
 
   const trades: PlannedTrade[] = [];
   let skippedSelfMatches = 0;
 
   for (const offer of remainingOffers) {
     for (const request of remainingRequests) {
-      if (offer.availableKwh <= ENERGY_EPSILON) break;
-      if (request.requestedKwh <= ENERGY_EPSILON) continue;
+      if (offer.remaining.lte(0)) break;
+      if (request.remaining.lte(0)) continue;
 
       if (offer.householdId === request.householdId) {
         skippedSelfMatches++;
         continue;
       }
 
-      const energyKwh = Math.min(offer.availableKwh, request.requestedKwh);
+      const energy = Decimal.min(offer.remaining, request.remaining);
       trades.push({
         offerId: offer.id,
         requestId: request.id,
         sellerHouseholdId: offer.householdId,
         buyerHouseholdId: request.householdId,
-        energyKwh,
+        energyKwh: formatEnergy(energy),
       });
 
-      offer.availableKwh -= energyKwh;
-      request.requestedKwh -= energyKwh;
+      offer.remaining = offer.remaining.minus(energy);
+      request.remaining = request.remaining.minus(energy);
     }
   }
 

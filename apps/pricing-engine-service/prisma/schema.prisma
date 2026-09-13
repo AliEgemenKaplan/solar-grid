@@ -9,11 +9,15 @@ generator client {
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
+// Prices are Decimal(10, 4) and energy is Decimal(12, 3). The supply/demand
+// formula divides, so the result is rounded to four decimals deliberately
+// rather than left to binary floating point.
+
 model PricingRule {
   id        String   @id @default(cuid())
-  basePrice Float
-  minPrice  Float
-  maxPrice  Float
+  basePrice Decimal  @db.Decimal(10, 4)
+  minPrice  Decimal  @db.Decimal(10, 4)
+  maxPrice  Decimal  @db.Decimal(10, 4)
   currency  String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -24,11 +28,14 @@ model PricingRule {
 
 model PriceSnapshot {
   id              String   @id @default(cuid())
-  totalSupplyKwh  Float
-  totalDemandKwh  Float
-  calculatedPrice Float
+  totalSupplyKwh  Decimal  @db.Decimal(12, 3)
+  totalDemandKwh  Decimal  @db.Decimal(12, 3)
+  calculatedPrice Decimal  @db.Decimal(10, 4)
   currency        String
   createdAt       DateTime @default(now())
 
+  // Every price lookup reads the newest snapshot, and the history endpoint
+  // pages through the same ordering.
+  @@index([createdAt])
   @@map("price_snapshots")
 }

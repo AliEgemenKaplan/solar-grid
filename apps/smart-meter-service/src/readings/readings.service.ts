@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboxPublisherService } from '../messaging/outbox-publisher.service';
 import { CreateReadingDto } from './dto/create-reading.dto';
@@ -9,8 +11,8 @@ import {
   ROUTING_KEY_DEMAND_DETECTED,
   ROUTING_KEY_SURPLUS_DETECTED,
 } from '@solar-grid/shared-contracts';
-import { generateId } from '@solar-grid/shared-utils';
-import { Prisma } from '../../generated/client';
+import { DecimalLike, formatEnergy, generateId } from '@solar-grid/shared-utils';
+import { MeterReading, Prisma } from '../../generated/client';
 
 export enum EnergyStatus {
   SURPLUS = 'SURPLUS',
@@ -20,9 +22,10 @@ export enum EnergyStatus {
 
 export interface EnergyCalculationResult {
   status: EnergyStatus;
-  netKwh: number;
-  surplusKwh: number;
-  demandKwh: number;
+  /** kWh as fixed-scale decimal strings, never floats. */
+  netKwh: string;
+  surplusKwh: string;
+  demandKwh: string;
 }
 
 interface OutboxRecord {
@@ -42,18 +45,41 @@ export class ReadingsService {
     private readonly outbox: OutboxPublisherService,
   ) {}
 
+  /**
+   * Decides what a reading means. Exact decimal arithmetic, so a household
+   * that produces 0.3 and consumes 0.1 has a surplus of exactly 0.200 kWh
+   * rather than 0.19999999999999998.
+   */
   static calculateEnergyStatus(
-    productionKwh: number,
-    consumptionKwh: number,
+    productionKwh: DecimalLike,
+    consumptionKwh: DecimalLike,
   ): EnergyCalculationResult {
-    const netKwh = productionKwh - consumptionKwh;
-    if (netKwh > 0) {
-      return { status: EnergyStatus.SURPLUS, netKwh, surplusKwh: netKwh, demandKwh: 0 };
+    const net = new Decimal(String(productionKwh)).minus(String(consumptionKwh));
+
+    if (net.isPositive() && !net.isZero()) {
+      return {
+        status: EnergyStatus.SURPLUS,
+        netKwh: formatEnergy(net),
+        surplusKwh: formatEnergy(net),
+        demandKwh: formatEnergy(0),
+      };
     }
-    if (netKwh < 0) {
-      return { status: EnergyStatus.DEMAND, netKwh, surplusKwh: 0, demandKwh: Math.abs(netKwh) };
+
+    if (net.isNegative()) {
+      return {
+        status: EnergyStatus.DEMAND,
+        netKwh: formatEnergy(net),
+        surplusKwh: formatEnergy(0),
+        demandKwh: formatEnergy(net.abs()),
+      };
     }
-    return { status: EnergyStatus.BALANCED, netKwh: 0, surplusKwh: 0, demandKwh: 0 };
+
+    return {
+      status: EnergyStatus.BALANCED,
+      netKwh: formatEnergy(0),
+      surplusKwh: formatEnergy(0),
+      demandKwh: formatEnergy(0),
+    };
   }
 
   async createReading(dto: CreateReadingDto, correlationId: string) {
@@ -72,7 +98,7 @@ export class ReadingsService {
       this.logger.warn(
         `Duplicate reading ignored: household=${dto.householdId} timestamp=${dto.timestamp} [cid=${correlationId}]`,
       );
-      return { ...existing, surplusKwh, demandKwh, duplicate: true };
+      return toReadingResponse(existing, surplusKwh, demandKwh, true);
     }
 
     this.logger.log(
@@ -86,28 +112,22 @@ export class ReadingsService {
         const created = await tx.meterReading.create({
           data: {
             householdId: dto.householdId,
-            productionKwh: dto.productionKwh,
-            consumptionKwh: dto.consumptionKwh,
+            productionKwh: formatEnergy(dto.productionKwh),
+            consumptionKwh: formatEnergy(dto.consumptionKwh),
             netKwh,
             status,
             timestamp,
           },
         });
 
-        await tx.householdEnergyStatus.upsert({
-          where: { householdId: dto.householdId },
-          update: {
-            currentStatus: status,
-            currentSurplusKwh: surplusKwh,
-            currentDemandKwh: demandKwh,
-          },
-          create: {
-            householdId: dto.householdId,
-            currentStatus: status,
-            currentSurplusKwh: surplusKwh,
-            currentDemandKwh: demandKwh,
-          },
-        });
+        await this.applyHouseholdStatus(
+          tx,
+          dto.householdId,
+          status,
+          surplusKwh,
+          demandKwh,
+          timestamp,
+        );
 
         // Same transaction as the reading: either both exist or neither does.
         if (outboxRecord) {
@@ -134,7 +154,7 @@ export class ReadingsService {
         void this.outbox.drain().catch(() => undefined);
       }
 
-      return { ...reading, surplusKwh, demandKwh, duplicate: false };
+      return toReadingResponse(reading, surplusKwh, demandKwh, false);
     } catch (err) {
       if (isUniqueViolation(err)) {
         // Two concurrent retries of the same reading; the other one won.
@@ -145,7 +165,7 @@ export class ReadingsService {
           this.logger.warn(
             `Concurrent duplicate reading ignored: household=${dto.householdId} timestamp=${dto.timestamp} [cid=${correlationId}]`,
           );
-          return { ...winner, surplusKwh, demandKwh, duplicate: true };
+          return toReadingResponse(winner, surplusKwh, demandKwh, true);
         }
       }
       throw err;
@@ -153,18 +173,47 @@ export class ReadingsService {
   }
 
   async getReadingsByHousehold(householdId: string) {
-    return this.prisma.meterReading.findMany({
+    const readings = await this.prisma.meterReading.findMany({
       where: { householdId },
       orderBy: { timestamp: 'desc' },
       take: 100,
     });
+    return readings.map((reading) => toReadingSummary(reading));
+  }
+
+  /**
+   * Writes the household's current status, but never lets an older reading
+   * overwrite a newer one. Expressed as a conditional upsert so two readings
+   * arriving at once cannot interleave into the wrong order.
+   */
+  private applyHouseholdStatus(
+    tx: Prisma.TransactionClient,
+    householdId: string,
+    status: EnergyStatus,
+    surplusKwh: string,
+    demandKwh: string,
+    timestamp: Date,
+  ) {
+    return tx.$executeRaw`
+      INSERT INTO "household_energy_status"
+        ("id", "householdId", "currentStatus", "currentSurplusKwh", "currentDemandKwh", "lastReadingAt", "updatedAt")
+      VALUES
+        (${randomUUID()}, ${householdId}, ${status}::"EnergyStatus", ${surplusKwh}::decimal, ${demandKwh}::decimal, ${timestamp}, now())
+      ON CONFLICT ("householdId") DO UPDATE SET
+        "currentStatus" = EXCLUDED."currentStatus",
+        "currentSurplusKwh" = EXCLUDED."currentSurplusKwh",
+        "currentDemandKwh" = EXCLUDED."currentDemandKwh",
+        "lastReadingAt" = EXCLUDED."lastReadingAt",
+        "updatedAt" = now()
+      WHERE "household_energy_status"."lastReadingAt" < EXCLUDED."lastReadingAt"
+    `;
   }
 
   private buildEvent(
     dto: CreateReadingDto,
     status: EnergyStatus,
-    surplusKwh: number,
-    demandKwh: number,
+    surplusKwh: string,
+    demandKwh: string,
     correlationId: string,
   ): OutboxRecord | null {
     const eventId = generateId();
@@ -172,8 +221,8 @@ export class ReadingsService {
       eventId,
       correlationId,
       householdId: dto.householdId,
-      productionKwh: dto.productionKwh,
-      consumptionKwh: dto.consumptionKwh,
+      productionKwh: formatEnergy(dto.productionKwh),
+      consumptionKwh: formatEnergy(dto.consumptionKwh),
       timestamp: dto.timestamp,
     };
 
@@ -210,6 +259,34 @@ export class ReadingsService {
     // A balanced reading has nothing to trade.
     return null;
   }
+}
+
+/** Energy leaves this service as fixed-scale decimal strings. */
+function toReadingSummary(reading: MeterReading) {
+  return {
+    id: reading.id,
+    householdId: reading.householdId,
+    productionKwh: formatEnergy(reading.productionKwh),
+    consumptionKwh: formatEnergy(reading.consumptionKwh),
+    netKwh: formatEnergy(reading.netKwh),
+    status: reading.status,
+    timestamp: reading.timestamp.toISOString(),
+    createdAt: reading.createdAt.toISOString(),
+  };
+}
+
+function toReadingResponse(
+  reading: MeterReading,
+  surplusKwh: string,
+  demandKwh: string,
+  duplicate: boolean,
+) {
+  return {
+    ...toReadingSummary(reading),
+    surplusKwh: formatEnergy(surplusKwh),
+    demandKwh: formatEnergy(demandKwh),
+    duplicate,
+  };
 }
 
 function isUniqueViolation(err: unknown): boolean {

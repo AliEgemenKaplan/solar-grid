@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTradeDto } from './dto/create-trade.dto';
-import { Prisma } from '../../generated/client';
+import { formatEnergy, formatMoney, formatPrice } from '@solar-grid/shared-utils';
+import { CompletedTrade, Prisma } from '../../generated/client';
 
 @Injectable()
 export class TradesService {
@@ -10,7 +12,13 @@ export class TradesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createTrade(dto: CreateTradeDto) {
-    // Check for existing idempotency key — return existing trade if duplicate
+    if (dto.sellerHouseholdId === dto.buyerHouseholdId) {
+      // The database refuses this too; answering here turns a constraint
+      // violation into an answer the caller can act on.
+      throw new BadRequestException('A household cannot trade with itself');
+    }
+
+    // Check for existing idempotency key - return existing trade if duplicate
     const existingKey = await this.prisma.idempotencyKey.findUnique({
       where: { key: dto.idempotencyKey },
     });
@@ -22,7 +30,7 @@ export class TradesService {
       const existingTrade = await this.prisma.completedTrade.findUnique({
         where: { tradeId: existingKey.tradeId },
       });
-      return { ...existingTrade, duplicate: true };
+      return existingTrade ? toTradeResponse(existingTrade, true) : null;
     }
 
     this.logger.log(
@@ -54,47 +62,51 @@ export class TradesService {
           },
         });
 
-        await tx.ledgerEntry.create({
-          data: {
-            tradeId: dto.tradeId,
-            householdId: dto.sellerHouseholdId,
-            entryType: 'CREDIT',
-            amount: dto.totalAmount,
-            currency: dto.currency,
-            correlationId: dto.correlationId,
-          },
+        // One credit and one debit. The unique index on
+        // (tradeId, householdId, entryType) means a second attempt to settle
+        // this trade cannot write a second pair, whatever the caller does.
+        await tx.ledgerEntry.createMany({
+          data: [
+            {
+              tradeId: dto.tradeId,
+              householdId: dto.sellerHouseholdId,
+              entryType: 'CREDIT',
+              amount: dto.totalAmount,
+              currency: dto.currency,
+              correlationId: dto.correlationId,
+            },
+            {
+              tradeId: dto.tradeId,
+              householdId: dto.buyerHouseholdId,
+              entryType: 'DEBIT',
+              amount: dto.totalAmount,
+              currency: dto.currency,
+              correlationId: dto.correlationId,
+            },
+          ],
         });
 
-        await tx.ledgerEntry.create({
-          data: {
-            tradeId: dto.tradeId,
-            householdId: dto.buyerHouseholdId,
-            entryType: 'DEBIT',
-            amount: dto.totalAmount,
-            currency: dto.currency,
-            correlationId: dto.correlationId,
-          },
-        });
+        // Always touch balances in the same order, sorted by household id.
+        // Two trades running in opposite directions between the same pair
+        // would otherwise each hold the row the other needs, and Postgres
+        // would break the deadlock by killing one of them.
+        const debit = new Decimal(dto.totalAmount).negated().toFixed(2);
+        const movements = [
+          { householdId: dto.sellerHouseholdId, delta: dto.totalAmount },
+          { householdId: dto.buyerHouseholdId, delta: debit },
+        ].sort((a, b) => a.householdId.localeCompare(b.householdId));
 
-        await tx.householdBalance.upsert({
-          where: { householdId: dto.sellerHouseholdId },
-          update: { balance: { increment: dto.totalAmount } },
-          create: {
-            householdId: dto.sellerHouseholdId,
-            balance: dto.totalAmount,
-            currency: dto.currency,
-          },
-        });
-
-        await tx.householdBalance.upsert({
-          where: { householdId: dto.buyerHouseholdId },
-          update: { balance: { decrement: dto.totalAmount } },
-          create: {
-            householdId: dto.buyerHouseholdId,
-            balance: -dto.totalAmount,
-            currency: dto.currency,
-          },
-        });
+        for (const movement of movements) {
+          await tx.householdBalance.upsert({
+            where: { householdId: movement.householdId },
+            update: { balance: { increment: movement.delta } },
+            create: {
+              householdId: movement.householdId,
+              balance: movement.delta,
+              currency: dto.currency,
+            },
+          });
+        }
 
         return completedTrade;
       });
@@ -103,7 +115,7 @@ export class TradesService {
         `Trade recorded successfully: tradeId=${dto.tradeId} seller+${dto.totalAmount} buyer-${dto.totalAmount} [cid=${dto.correlationId}]`,
       );
 
-      return { ...trade, duplicate: false };
+      return toTradeResponse(trade, false);
     } catch (err) {
       // Checking for the key before inserting leaves a gap: two requests
       // carrying the same key can both pass the check. The unique index is
@@ -117,7 +129,7 @@ export class TradesService {
           this.logger.warn(
             `Concurrent duplicate trade resolved: idempotencyKey=${dto.idempotencyKey} tradeId=${dto.tradeId} [cid=${dto.correlationId}]`,
           );
-          return { ...winner, duplicate: true };
+          return toTradeResponse(winner, true);
         }
       }
       throw err;
@@ -125,17 +137,38 @@ export class TradesService {
   }
 
   async getTradeById(tradeId: string) {
-    return this.prisma.completedTrade.findUnique({ where: { tradeId } });
+    const trade = await this.prisma.completedTrade.findUnique({ where: { tradeId } });
+    return trade ? toTradeResponse(trade, false) : null;
   }
 
   async getTradesByHousehold(householdId: string) {
-    return this.prisma.completedTrade.findMany({
+    const trades = await this.prisma.completedTrade.findMany({
       where: {
         OR: [{ sellerHouseholdId: householdId }, { buyerHouseholdId: householdId }],
       },
       orderBy: { completedAt: 'desc' },
     });
+    return trades.map((trade) => toTradeResponse(trade, false));
   }
+}
+
+/** Money and energy leave this service as fixed-scale decimal strings. */
+function toTradeResponse(trade: CompletedTrade, duplicate: boolean) {
+  return {
+    id: trade.id,
+    tradeId: trade.tradeId,
+    sellerHouseholdId: trade.sellerHouseholdId,
+    buyerHouseholdId: trade.buyerHouseholdId,
+    energyKwh: formatEnergy(trade.energyKwh),
+    pricePerKwh: formatPrice(trade.pricePerKwh),
+    totalAmount: formatMoney(trade.totalAmount),
+    currency: trade.currency,
+    idempotencyKey: trade.idempotencyKey,
+    correlationId: trade.correlationId,
+    completedAt: trade.completedAt.toISOString(),
+    createdAt: trade.createdAt.toISOString(),
+    duplicate,
+  };
 }
 
 function isUniqueViolation(err: unknown): boolean {

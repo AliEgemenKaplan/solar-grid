@@ -18,6 +18,7 @@
     "docker:down": "docker compose -f infrastructure/docker-compose.yml down",
     "docker:clean": "docker compose -f infrastructure/docker-compose.yml down -v --remove-orphans",
     "prisma:generate": "pnpm -r --workspace-concurrency=1 --filter \"./apps/*\" run prisma:generate",
+    "prisma:deploy": "pnpm -r --workspace-concurrency=1 --filter \"./apps/*\" prisma:deploy",
     "demo:sh": "bash scripts/demo.sh",
     "demo:ps": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1"
   },
