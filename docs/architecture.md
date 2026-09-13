@@ -48,8 +48,9 @@ Each database is built from committed SQL migrations applied with
 - **Publisher**: smart-meter-service
 - **Consumer**: trade-matching-service
 - Exchanges and queues are durable and messages are published as persistent, so events survive a broker restart.
-- A dead-letter exchange (`solar-grid.energy.dlx`) captures messages that fail during consumer processing; the consumer nacks without requeue so a failing message is parked rather than redelivered forever.
-- No delayed retry queue yet: a failed message goes to the DLQ on the first attempt and is replayed by hand.
+- A failing message is retried a bounded number of times with a growing delay through `solar-grid.energy.retry`, and is then parked in `trade-matching.energy.dlq` through the dead letter exchange. Nothing is ever redelivered forever.
+- Messages are published with `mandatory`, so an event with nowhere to go comes back to the publisher rather than disappearing.
+- See [event-flow.md](event-flow.md) for the topology, the retry ladder and the recovery behaviour.
 
 ### REST APIs (Sync Calls)
 

@@ -91,19 +91,24 @@ On the billing side the `idempotency_keys` unique index is the real guard: two
 requests carrying one key can both pass a preliminary check, so the request
 that loses the insert reports the winner's trade instead of failing.
 
-## Failed messages stop, they do not spin
+## Failed messages are retried a bounded number of times, then stop
 
 The RabbitMQ library requeues by default, which turns one failing message into
-an endless redelivery loop that blocks everything behind it. The consumer nacks
-without requeue instead, so the message is dead lettered to
-`trade-matching.energy.dlq` through `solar-grid.energy.dlx`.
+an endless redelivery loop that blocks everything behind it. Nothing here
+relies on that behaviour.
 
-Malformed events are rejected before any database work, since no number of
-retries will fix a message that is missing its `surplusKwh`.
+A transient failure - the database blinking, a dependency briefly unavailable -
+is retried with a delay that doubles each attempt (2s, 4s, 8s by default). The
+attempt number travels in the `x-retry-count` header, so it can be read from
+the management UI rather than guessed. Once `RABBITMQ_MAX_RETRIES` attempts are
+spent the message is parked in `trade-matching.energy.dlq` with the reason and
+the attempt count in its headers.
 
-There is no delayed retry yet: a transient failure goes to the dead letter
-queue on the first attempt and has to be replayed. A retry queue with a TTL
-and a bounded attempt count is the next step.
+Malformed events, unknown event types and event versions this consumer does not
+understand are parked immediately: no number of retries will fix a message that
+is missing its `surplusKwh`.
+
+[event-flow.md](event-flow.md) has the topology and the exact routing.
 
 ## Events survive a broker restart
 
@@ -111,7 +116,17 @@ A durable exchange and a durable queue only preserve the topology. Messages
 also have to be published as persistent, which the publisher does through
 `defaultPublishOptions`. Each message carries `messageId` (the event id),
 `correlationId` and `type` so it can be traced and deduplicated without
-parsing the body.
+parsing the body. The topology is redeclared on every connect, so a broker that
+has been restarted has its exchanges and queues back before anything is
+consumed.
+
+## An event the broker cannot route is not lost
+
+Messages are published with `mandatory`, so one that matches no binding comes
+back to the publisher instead of being dropped. The outbox row stays pending,
+the reason is recorded on it, and the event publishes itself once a consumer
+has declared its queue - which is exactly the state the system is in the first
+time it ever starts.
 
 ## Service to service calls have a deadline
 

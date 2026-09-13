@@ -45,12 +45,37 @@ Communication patterns:
 
 ## Reliability Notes
 
-- Smart Meter events include `eventId`.
-- Trade Matching stores `sourceEventId` on offers/requests and skips duplicate events.
-- RabbitMQ consumer prefetch is set to `1` for the demo to serialize matching work.
-- Failed RabbitMQ messages are routed to `trade-matching.energy.dlq`.
-- Billing uses `idempotencyKey` and a Prisma transaction to prevent duplicate ledger entries.
+- A reading and the event it produces are written in one database transaction,
+  and a publisher moves the event to RabbitMQ afterwards, so a broker outage
+  delays events instead of losing them.
+- Events are persistent, carry `eventId`, `correlationId`, `occurredAt`,
+  `sourceEventId` and a schema `version`, and are published with `mandatory` so
+  one with nowhere to go comes back instead of disappearing.
+- A failing message is retried with a growing delay up to `RABBITMQ_MAX_RETRIES`
+  times and is then parked in `trade-matching.energy.dlq` with the reason in its
+  headers. Nothing is redelivered forever.
+- Duplicate delivery is expected: `sourceEventId` is unique on offers and
+  requests, trades carry a stable idempotency key, and the ledger refuses to
+  record the same settlement twice.
+- Energy is reserved on both sides before billing is called and released only
+  if billing refuses outright, so the same kilowatt hours cannot be sold or
+  charged twice.
+- Consumer prefetch is `1`: matching is serialised by a database lock anyway.
 - Health endpoints are lightweight liveness checks at `/health`.
+
+[docs/event-flow.md](docs/event-flow.md) walks through how an event is created,
+how it crosses RabbitMQ, what happens when it fails and how it reaches the dead
+letter queue. [docs/reliability.md](docs/reliability.md) lists the guarantees
+and the test that proves each one.
+
+### Looking at the queues
+
+```bash
+docker exec solar-grid-rabbitmq rabbitmqctl list_queues name messages consumers
+```
+
+The management UI is at http://localhost:15672 (guest / guest), where a parked
+message can be inspected and republished once the cause is fixed.
 
 ## Prerequisites
 
