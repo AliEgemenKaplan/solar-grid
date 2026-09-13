@@ -3,18 +3,20 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
-import { randomUUID } from 'node:crypto';
+import { getOrGenerateCorrelationId } from '@solar-grid/shared-utils';
 import type { NextFunction, Request, Response } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const logger = new Logger('Bootstrap');
 
+  // Every request gets a correlation id, and one that arrives unusable - too
+  // long, or carrying characters that have no business in a log line - is
+  // replaced rather than trusted.
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (!req.headers[HEADER_CORRELATION_ID]) {
-      req.headers[HEADER_CORRELATION_ID] = randomUUID();
-    }
-    res.setHeader(HEADER_CORRELATION_ID, req.headers[HEADER_CORRELATION_ID]);
+    const correlationId = getOrGenerateCorrelationId(req.headers);
+    req.headers[HEADER_CORRELATION_ID] = correlationId;
+    res.setHeader(HEADER_CORRELATION_ID, correlationId);
     next();
   });
 

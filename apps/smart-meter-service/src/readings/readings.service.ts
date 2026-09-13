@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OutboxPublisherService } from '../messaging/outbox-publisher.service';
 import { CreateReadingDto } from './dto/create-reading.dto';
 import {
+  ENERGY_EVENT_VERSION,
   EnergyDemandDetectedEvent,
   EnergyEventType,
   EnergySurplusDetectedEvent,
@@ -105,10 +106,8 @@ export class ReadingsService {
       `Processing reading for ${dto.householdId}: net=${netKwh} kWh, status=${status} [cid=${correlationId}]`,
     );
 
-    const outboxRecord = this.buildEvent(dto, status, surplusKwh, demandKwh, correlationId);
-
     try {
-      const reading = await this.prisma.$transaction(async (tx) => {
+      const { reading, outboxRecord } = await this.prisma.$transaction(async (tx) => {
         const created = await tx.meterReading.create({
           data: {
             householdId: dto.householdId,
@@ -129,20 +128,31 @@ export class ReadingsService {
           timestamp,
         );
 
+        // The event is caused by this reading, so it can only be built once
+        // the reading has an id to point back to.
+        const record = this.buildEvent(
+          dto,
+          status,
+          surplusKwh,
+          demandKwh,
+          correlationId,
+          created.id,
+        );
+
         // Same transaction as the reading: either both exist or neither does.
-        if (outboxRecord) {
+        if (record) {
           await tx.outboxEvent.create({
             data: {
-              eventId: outboxRecord.eventId,
-              eventType: outboxRecord.eventType,
-              routingKey: outboxRecord.routingKey,
-              payload: outboxRecord.payload as unknown as Prisma.InputJsonValue,
-              correlationId: outboxRecord.correlationId,
+              eventId: record.eventId,
+              eventType: record.eventType,
+              routingKey: record.routingKey,
+              payload: record.payload as unknown as Prisma.InputJsonValue,
+              correlationId: record.correlationId,
             },
           });
         }
 
-        return created;
+        return { reading: created, outboxRecord: record };
       });
 
       if (outboxRecord) {
@@ -215,11 +225,17 @@ export class ReadingsService {
     surplusKwh: string,
     demandKwh: string,
     correlationId: string,
+    sourceEventId: string,
   ): OutboxRecord | null {
     const eventId = generateId();
     const common = {
       eventId,
+      version: ENERGY_EVENT_VERSION,
+      // When the event was produced; `timestamp` below is when the meter took
+      // the reading, which is a different thing and can be much older.
+      occurredAt: new Date().toISOString(),
       correlationId,
+      sourceEventId,
       householdId: dto.householdId,
       productionKwh: formatEnergy(dto.productionKwh),
       consumptionKwh: formatEnergy(dto.consumptionKwh),
