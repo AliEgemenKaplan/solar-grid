@@ -33,7 +33,12 @@ Each service owns its own PostgreSQL database and is the only service allowed to
 | trade-matching-service | matching_db    |
 | billing-ledger-service | ledger_db      |
 
-This enforces loose coupling: if the billing service changes its schema, no other service breaks. Services exchange data only through REST APIs and RabbitMQ events — never by sharing a database.
+This enforces loose coupling: if the billing service changes its schema, no other service breaks. Services exchange data only through REST APIs and RabbitMQ events - never by sharing a database.
+
+Each database is built from committed SQL migrations applied with
+`prisma migrate deploy` at startup, and money and energy are stored as exact
+`numeric` columns rather than floats. See
+[database-design.md](database-design.md).
 
 ## Communication Patterns
 

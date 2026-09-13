@@ -24,6 +24,19 @@ An event may therefore be published twice - after a crash between the publish
 and the update, for instance. That is intentional: delivery is at least once
 and the consumer removes the duplicates.
 
+## Amounts do not drift
+
+Money and energy are `numeric` in the database and decimal objects in code, so
+`0.1 + 0.2` is `0.30` and an offer that has been fully consumed holds exactly
+zero. The float version needed an epsilon comparison to decide whether a
+remainder of 1e-17 kWh counted as exhausted; that guesswork is gone. Amounts
+are rounded once, half away from zero, at the scale the column stores.
+
+## A reading that arrives late cannot rewind a household
+
+`household_energy_status` records the timestamp of the reading behind it and is
+written with a conditional upsert, so an out-of-order delivery updates nothing.
+
 ## The same reading is only counted once
 
 A meter reports one reading per household per timestamp, so

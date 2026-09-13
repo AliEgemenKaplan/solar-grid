@@ -1,5 +1,24 @@
 # Solar Grid — API Contracts
 
+## Decimal values
+
+Money and energy are returned as **fixed-scale decimal strings**, never JSON
+numbers, because a JSON number is a double and a double cannot hold `0.1` or
+`4.0001` exactly.
+
+| Kind          | Scale | Example    |
+| ------------- | ----- | ---------- |
+| Energy (kWh)  | 3     | `"7.000"`  |
+| Price per kWh | 4     | `"4.0000"` |
+| Money (TRY)   | 2     | `"16.00"`  |
+
+Requests follow the same rule where the value is financial: `POST /trades`
+takes decimal strings. Meter readings and pricing aggregates still accept JSON
+numbers, since they come from instruments rather than from a ledger, and are
+converted to decimals on arrival.
+
+---
+
 All services support the `x-correlation-id` request header for distributed tracing. Trade Matching forwards this header when calling Pricing and Billing.
 Swagger UI is available at `http://localhost:<port>/api` for each service.
 
@@ -28,12 +47,12 @@ Submit a smart meter reading.
 {
   "id": "clxxxxx",
   "householdId": "HH-001",
-  "productionKwh": 8.5,
-  "consumptionKwh": 3.2,
-  "netKwh": 5.3,
+  "productionKwh": "8.500",
+  "consumptionKwh": "3.200",
+  "netKwh": "5.300",
   "status": "SURPLUS",
-  "surplusKwh": 5.3,
-  "demandKwh": 0,
+  "surplusKwh": "5.300",
+  "demandKwh": "0.000",
   "timestamp": "2026-05-27T10:00:00.000Z",
   "createdAt": "2026-05-27T10:00:01.000Z",
   "duplicate": false
@@ -59,8 +78,9 @@ Returns the current energy status.
   "id": "clxxxxx",
   "householdId": "HH-001",
   "currentStatus": "SURPLUS",
-  "currentSurplusKwh": 5.3,
-  "currentDemandKwh": 0,
+  "currentSurplusKwh": "5.300",
+  "currentDemandKwh": "0.000",
+  "lastReadingAt": "2026-05-27T10:00:00.000Z",
   "updatedAt": "2026-05-27T10:00:01.000Z"
 }
 ```
@@ -79,11 +99,11 @@ Returns the current energy status.
 
 ```json
 {
-  "pricePerKwh": 3.2,
+  "pricePerKwh": "3.2000",
   "currency": "TRY",
   "calculatedAt": "2026-05-27T10:05:00.000Z",
-  "supplyKwh": 50,
-  "demandKwh": 40
+  "supplyKwh": "50.000",
+  "demandKwh": "40.000"
 }
 ```
 
@@ -125,9 +145,9 @@ Record a completed trade (idempotent via `idempotencyKey`).
   "tradeId": "TRD-001",
   "sellerHouseholdId": "HH-SELLER-001",
   "buyerHouseholdId": "HH-BUYER-001",
-  "energyKwh": 4,
-  "pricePerKwh": 4.75,
-  "totalAmount": 19,
+  "energyKwh": "4.000",
+  "pricePerKwh": "4.7500",
+  "totalAmount": "19.00",
   "currency": "TRY",
   "idempotencyKey": "match-uuid-001",
   "correlationId": "flow-uuid-001",
@@ -155,7 +175,7 @@ If the `idempotencyKey` already exists: response includes `"duplicate": true` an
 ### GET /balances/:householdId
 
 ```json
-{ "householdId": "HH-SELLER-001", "balance": 19, "currency": "TRY", "updatedAt": "..." }
+{ "householdId": "HH-SELLER-001", "balance": "19.00", "currency": "TRY", "updatedAt": "..." }
 ```
 
 ### GET /ledger/:householdId

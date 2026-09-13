@@ -184,9 +184,10 @@ $tradeBody = @{
     tradeId = $idemTradeId
     sellerHouseholdId = $IdemSellerId
     buyerHouseholdId = $IdemBuyerId
-    energyKwh = 2
-    pricePerKwh = 4.0
-    totalAmount = 8.0
+    # Money and energy cross this boundary as decimal strings, not numbers.
+    energyKwh = "2.000"
+    pricePerKwh = "4.0000"
+    totalAmount = "8.00"
     currency = "TRY"
     idempotencyKey = $idemKey
     correlationId = $CorrelationId

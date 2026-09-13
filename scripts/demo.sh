@@ -193,12 +193,24 @@ echo
 echo "8. Billing idempotency"
 idem_key="demo-idem-${RUN_ID}"
 idem_trade_id="TRD-DEMO-${RUN_ID}"
-idem_body="{\"tradeId\":\"$idem_trade_id\",\"sellerHouseholdId\":\"$IDEM_SELLER_ID\",\"buyerHouseholdId\":\"$IDEM_BUYER_ID\",\"energyKwh\":2,\"pricePerKwh\":4.0,\"totalAmount\":8.0,\"currency\":\"TRY\",\"idempotencyKey\":\"$idem_key\",\"correlationId\":\"$CORRELATION_ID\",\"completedAt\":\"2026-05-27T10:20:00.000Z\"}"
+# Money and energy cross this boundary as decimal strings, not JSON numbers.
+idem_body="{\"tradeId\":\"$idem_trade_id\",\"sellerHouseholdId\":\"$IDEM_SELLER_ID\",\"buyerHouseholdId\":\"$IDEM_BUYER_ID\",\"energyKwh\":\"2.000\",\"pricePerKwh\":\"4.0000\",\"totalAmount\":\"8.00\",\"currency\":\"TRY\",\"idempotencyKey\":\"$idem_key\",\"correlationId\":\"$CORRELATION_ID\",\"completedAt\":\"2026-05-27T10:20:00.000Z\"}"
 first_idem="$(request POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
 second_idem="$(request POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
 duplicate="$(printf '%s' "$second_idem" | json_value duplicate 2>/dev/null || true)"
 echo "Duplicate response: $duplicate"
 [ "$duplicate" = "True" ] || [ "$duplicate" = "true" ] && pass "duplicate idempotency check" || fail "duplicate idempotency check"
+echo
+
+echo "9. Decimal contract"
+balance_raw="$(request GET "$BASE_BILLING/balances/$SELLER_ID" 2>/dev/null | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["balance"])')"
+price_raw="$(request GET "$BASE_PRICING/prices/current" 2>/dev/null | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["pricePerKwh"])')"
+echo "Balance as returned: $balance_raw | price as returned: $price_raw"
+if printf '%s' "$balance_raw" | grep -qE '^-?[0-9]+\.[0-9]{2}$' && printf '%s' "$price_raw" | grep -qE '^[0-9]+\.[0-9]{4}$'; then
+  pass "money and price returned as fixed-scale decimal strings"
+else
+  fail "money and price returned as fixed-scale decimal strings"
+fi
 echo
 
 echo "Summary: $PASS_COUNT passed, $FAIL_COUNT failed"
