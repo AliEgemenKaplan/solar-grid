@@ -37,9 +37,9 @@ const surplusEvent: EnergySurplusDetectedEvent = {
   eventType: EnergyEventType.EnergySurplusDetected,
   correlationId: 'cid-001',
   householdId: 'HH-SELLER-001',
-  productionKwh: 10,
-  consumptionKwh: 3,
-  surplusKwh: 7,
+  productionKwh: '10.000',
+  consumptionKwh: '3.000',
+  surplusKwh: '7.000',
   timestamp: '2026-05-27T10:00:00.000Z',
 };
 
@@ -48,9 +48,9 @@ const demandEvent: EnergyDemandDetectedEvent = {
   eventType: EnergyEventType.EnergyDemandDetected,
   correlationId: 'cid-002',
   householdId: 'HH-BUYER-001',
-  productionKwh: 1,
-  consumptionKwh: 5,
-  demandKwh: 4,
+  productionKwh: '1.000',
+  consumptionKwh: '5.000',
+  demandKwh: '4.000',
   timestamp: '2026-05-27T10:01:00.000Z',
 };
 
@@ -142,8 +142,9 @@ describe('validateEnergyEvent', () => {
     ['missing correlationId', { ...surplusEvent, correlationId: '  ' }],
     ['missing householdId', { ...surplusEvent, householdId: undefined }],
     ['unknown eventType', { ...surplusEvent, eventType: 'SomethingElse' }],
-    ['negative surplus', { ...surplusEvent, surplusKwh: -5 }],
+    ['negative surplus', { ...surplusEvent, surplusKwh: '-5.000' }],
     ['non numeric demand', { ...demandEvent, demandKwh: 'lots' }],
+    ['zero surplus', { ...surplusEvent, surplusKwh: '0.000' }],
     ['infinite demand', { ...demandEvent, demandKwh: Number.POSITIVE_INFINITY }],
   ])('rejects %s', (_label, event) => {
     expect(validateEnergyEvent(event)).not.toBeNull();

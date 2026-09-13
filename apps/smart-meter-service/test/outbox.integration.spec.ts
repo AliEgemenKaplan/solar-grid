@@ -36,7 +36,7 @@ describe('smart meter outbox', () => {
 
   beforeAll(async () => {
     postgres = await new PostgreSqlContainer('postgres:15-alpine').start();
-    execSync('pnpm exec prisma db push --skip-generate --accept-data-loss', {
+    execSync('pnpm exec prisma migrate deploy', {
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, DATABASE_URL: postgres.getConnectionUri() },
       stdio: 'ignore',
@@ -81,7 +81,8 @@ describe('smart meter outbox', () => {
       expect(event.payload).toMatchObject({
         eventType: 'EnergySurplusDetected',
         householdId: 'HH-SELLER',
-        surplusKwh: 7,
+        // Energy travels as a fixed-scale decimal string, not a JSON number.
+        surplusKwh: '7.000',
       });
     });
 
@@ -233,7 +234,7 @@ describe('smart meter outbox', () => {
         expect(JSON.parse(message.content.toString())).toMatchObject({
           eventId: event.eventId,
           householdId: 'HH-SELLER',
-          surplusKwh: 7,
+          surplusKwh: '7.000',
         });
 
         // Draining again must not republish what is already published.

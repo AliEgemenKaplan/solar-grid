@@ -22,7 +22,7 @@ describe('planTrades', () => {
         requestId: 'b1',
         sellerHouseholdId: 'HH-SELLER',
         buyerHouseholdId: 'HH-BUYER',
-        energyKwh: 4,
+        energyKwh: '4.000',
       },
     ]);
   });
@@ -31,7 +31,7 @@ describe('planTrades', () => {
     const plan = planTrades([offer('s1', 'HH-SELLER', 10)], [request('b1', 'HH-BUYER', 4)]);
 
     expect(plan.trades).toHaveLength(1);
-    expect(plan.trades[0].energyKwh).toBe(4);
+    expect(plan.trades[0].energyKwh).toBe('4.000');
   });
 
   it('spreads one offer across several buyers in arrival order', () => {
@@ -41,10 +41,10 @@ describe('planTrades', () => {
     );
 
     expect(plan.trades.map((trade) => [trade.requestId, trade.energyKwh])).toEqual([
-      ['b1', 4],
-      ['b2', 3],
+      ['b1', '4.000'],
+      ['b2', '3.000'],
       // Only 3 kWh of the 5 requested are left on the offer.
-      ['b3', 3],
+      ['b3', '3.000'],
     ]);
   });
 
@@ -78,7 +78,7 @@ describe('planTrades', () => {
         requestId: 'b2',
         sellerHouseholdId: 'HH-SAME',
         buyerHouseholdId: 'HH-OTHER',
-        energyKwh: 6,
+        energyKwh: '6.000',
       },
     ]);
   });
@@ -88,8 +88,9 @@ describe('planTrades', () => {
     expect(planTrades([offer('s1', 'HH-SELLER', 4)], []).trades).toHaveLength(0);
   });
 
-  it('does not plan dust trades left behind by floating point arithmetic', () => {
-    // 0.3 - 0.1 - 0.2 lands a hair above zero in binary floating point.
+  it('leaves nothing behind when an offer divides unevenly', () => {
+    // 0.3 - 0.1 - 0.2 lands a hair above zero as doubles, which used to need
+    // an epsilon comparison. With decimals the offer is exactly exhausted.
     const plan = planTrades(
       [offer('s1', 'HH-SELLER', 0.3)],
       [request('b1', 'HH-A', 0.1), request('b2', 'HH-B', 0.2), request('b3', 'HH-C', 5)],

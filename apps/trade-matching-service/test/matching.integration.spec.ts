@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { CompletedTradeDto } from '@solar-grid/shared-contracts';
+import Decimal from 'decimal.js';
 import { PrismaClient } from '../generated/client';
 import { MatchingService } from '../src/matching/matching.service';
 import {
@@ -52,13 +53,17 @@ class FakeBilling {
 
 const fakePricing = {
   getCurrentPrice: async () => ({
-    pricePerKwh: 4,
+    pricePerKwh: '4.0000',
     currency: 'TRY',
     calculatedAt: new Date().toISOString(),
-    supplyKwh: 0,
-    demandKwh: 0,
+    supplyKwh: '0.000',
+    demandKwh: '0.000',
   }),
 };
+
+/** Prisma hands back Decimal objects; compare them as fixed-scale strings. */
+const kwh = (value: { toFixed(dp: number): string }) => value.toFixed(3);
+const money = (value: { toFixed(dp: number): string }) => value.toFixed(2);
 
 describe('MatchingService against a real database', () => {
   let container: StartedPostgreSqlContainer;
@@ -70,7 +75,7 @@ describe('MatchingService against a real database', () => {
     container = await new PostgreSqlContainer('postgres:15-alpine').start();
     const url = container.getConnectionUri();
 
-    execSync('pnpm exec prisma db push --skip-generate --accept-data-loss', {
+    execSync('pnpm exec prisma migrate deploy', {
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, DATABASE_URL: url },
       stdio: 'ignore',
@@ -97,6 +102,19 @@ describe('MatchingService against a real database', () => {
       billing as unknown as BillingClient,
     );
   });
+
+  async function seedOffer(offerKwh: number) {
+    return prisma.sellOffer.create({
+      data: {
+        householdId: 'HH-SELLER',
+        sourceEventId: randomUUID(),
+        availableKwh: offerKwh,
+        originalKwh: offerKwh,
+        status: 'OPEN',
+        correlationId: 'cid-seed',
+      },
+    });
+  }
 
   async function seed(offerKwh: number, requestKwh: number) {
     const offer = await prisma.sellOffer.create({
@@ -133,30 +151,30 @@ describe('MatchingService against a real database', () => {
 
     const trade = await prisma.tradeMatch.findFirstOrThrow();
     expect(trade.status).toBe('COMPLETED');
-    expect(trade.energyKwh).toBe(4);
-    expect(trade.totalAmount).toBe(16);
+    expect(kwh(trade.energyKwh)).toBe('4.000');
+    expect(money(trade.totalAmount)).toBe('16.00');
     expect(trade.idempotencyKey).toBe(trade.tradeId);
 
     const offerAfter = await prisma.sellOffer.findUniqueOrThrow({ where: { id: offer.id } });
-    expect(offerAfter.availableKwh).toBe(6);
+    expect(kwh(offerAfter.availableKwh)).toBe('6.000');
     expect(offerAfter.status).toBe('PARTIALLY_MATCHED');
 
     const requestAfter = await prisma.buyRequest.findUniqueOrThrow({ where: { id: request.id } });
-    expect(requestAfter.requestedKwh).toBe(0);
+    expect(kwh(requestAfter.requestedKwh)).toBe('0.000');
     expect(requestAfter.status).toBe('MATCHED');
   });
 
   it('reserves the energy before it calls billing', async () => {
     const { offer } = await seed(4, 4);
-    let availableDuringCall: number | undefined;
+    let availableDuringCall: string | undefined;
     billing.onCall = async () => {
       const row = await prisma.sellOffer.findUniqueOrThrow({ where: { id: offer.id } });
-      availableDuringCall = row.availableKwh;
+      availableDuringCall = kwh(row.availableKwh);
     };
 
     await service.runMatching('cid-order');
 
-    expect(availableDuringCall).toBe(0);
+    expect(availableDuringCall).toBe('0.000');
   });
 
   it('keeps the trade reserved when billing does not answer, then settles it with the same key', async () => {
@@ -171,7 +189,7 @@ describe('MatchingService against a real database', () => {
     // The energy stays reserved; releasing it here is what used to let the
     // same kilowatt hours be sold and billed a second time.
     const offerDuring = await prisma.sellOffer.findUniqueOrThrow({ where: { id: offer.id } });
-    expect(offerDuring.availableKwh).toBe(6);
+    expect(kwh(offerDuring.availableKwh)).toBe('6.000');
 
     billing.behaviour = 'ok';
     const second = await service.runMatching('cid-attempt-2');
@@ -219,10 +237,10 @@ describe('MatchingService against a real database', () => {
     expect(trade.status).toBe('FAILED');
 
     const offerAfter = await prisma.sellOffer.findUniqueOrThrow({ where: { id: offer.id } });
-    expect(offerAfter.availableKwh).toBe(10);
+    expect(kwh(offerAfter.availableKwh)).toBe('10.000');
     expect(offerAfter.status).toBe('OPEN');
     const requestAfter = await prisma.buyRequest.findUniqueOrThrow({ where: { id: request.id } });
-    expect(requestAfter.requestedKwh).toBe(4);
+    expect(kwh(requestAfter.requestedKwh)).toBe('4.000');
     expect(requestAfter.status).toBe('OPEN');
 
     // Released energy is available to the next run.
@@ -244,14 +262,15 @@ describe('MatchingService against a real database', () => {
     expect(billing.recorded.size).toBe(1);
 
     const offerAfter = await prisma.sellOffer.findUniqueOrThrow({ where: { id: offer.id } });
-    expect(offerAfter.availableKwh).toBe(0);
+    expect(kwh(offerAfter.availableKwh)).toBe('0.000');
     const requestAfter = await prisma.buyRequest.findUniqueOrThrow({ where: { id: request.id } });
-    expect(requestAfter.requestedKwh).toBe(0);
+    expect(kwh(requestAfter.requestedKwh)).toBe('0.000');
   });
 
   it('never oversells when several runs race over a larger offer', async () => {
-    const { offer } = await seed(10, 0);
-    await prisma.buyRequest.deleteMany();
+    // Seeded without a request: an offer with no buyer is a valid state, while
+    // a zero kWh request is not - the database refuses it.
+    const offer = await seedOffer(10);
     const requests = await Promise.all(
       ['HH-A', 'HH-B', 'HH-C', 'HH-D'].map((householdId) =>
         prisma.buyRequest.create({
@@ -274,17 +293,17 @@ describe('MatchingService against a real database', () => {
     ]);
 
     const offerAfter = await prisma.sellOffer.findUniqueOrThrow({ where: { id: offer.id } });
-    expect(offerAfter.availableKwh).toBe(0);
+    expect(kwh(offerAfter.availableKwh)).toBe('0.000');
 
     const trades = await prisma.tradeMatch.findMany();
-    const sold = trades.reduce((total, trade) => total + trade.energyKwh, 0);
+    const sold = trades.reduce((total, trade) => total.plus(trade.energyKwh), new Decimal(0));
     // The offer only ever held 10 kWh, however many runs competed for it.
-    expect(sold).toBe(10);
+    expect(sold.toFixed(3)).toBe('10.000');
     expect(trades.every((trade) => trade.status === 'COMPLETED')).toBe(true);
 
     const remaining = await prisma.buyRequest.findMany({
       where: { id: { in: requests.map((r) => r.id) } },
     });
-    expect(remaining.every((request) => request.requestedKwh >= 0)).toBe(true);
+    expect(remaining.every((request) => request.requestedKwh.gte(0))).toBe(true);
   });
 });

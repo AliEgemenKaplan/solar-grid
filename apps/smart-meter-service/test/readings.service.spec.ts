@@ -1,49 +1,70 @@
-import { ReadingsService, EnergyStatus } from '../src/readings/readings.service';
+import { EnergyStatus, ReadingsService } from '../src/readings/readings.service';
+
+const calculate = ReadingsService.calculateEnergyStatus;
 
 describe('ReadingsService.calculateEnergyStatus', () => {
-  it('should return SURPLUS when production > consumption', () => {
-    const result = ReadingsService.calculateEnergyStatus(8.5, 3.2);
-    expect(result.status).toBe(EnergyStatus.SURPLUS);
-    expect(result.netKwh).toBeCloseTo(5.3);
-    expect(result.surplusKwh).toBeCloseTo(5.3);
-    expect(result.demandKwh).toBe(0);
+  it('reports a surplus when production exceeds consumption', () => {
+    expect(calculate(10, 3)).toEqual({
+      status: EnergyStatus.SURPLUS,
+      netKwh: '7.000',
+      surplusKwh: '7.000',
+      demandKwh: '0.000',
+    });
   });
 
-  it('should return DEMAND when consumption > production', () => {
-    const result = ReadingsService.calculateEnergyStatus(1, 5);
-    expect(result.status).toBe(EnergyStatus.DEMAND);
-    expect(result.netKwh).toBeCloseTo(-4);
-    expect(result.surplusKwh).toBe(0);
-    expect(result.demandKwh).toBeCloseTo(4);
+  it('reports demand when consumption exceeds production', () => {
+    expect(calculate(1, 5)).toEqual({
+      status: EnergyStatus.DEMAND,
+      netKwh: '-4.000',
+      surplusKwh: '0.000',
+      demandKwh: '4.000',
+    });
   });
 
-  it('should return BALANCED when production === consumption', () => {
-    const result = ReadingsService.calculateEnergyStatus(4, 4);
-    expect(result.status).toBe(EnergyStatus.BALANCED);
-    expect(result.netKwh).toBe(0);
-    expect(result.surplusKwh).toBe(0);
-    expect(result.demandKwh).toBe(0);
+  it('reports balanced when the two are equal', () => {
+    expect(calculate(5, 5)).toEqual({
+      status: EnergyStatus.BALANCED,
+      netKwh: '0.000',
+      surplusKwh: '0.000',
+      demandKwh: '0.000',
+    });
   });
 
-  it('should handle zero production', () => {
-    const result = ReadingsService.calculateEnergyStatus(0, 3);
-    expect(result.status).toBe(EnergyStatus.DEMAND);
-    expect(result.demandKwh).toBe(3);
+  it('handles a household that produces nothing', () => {
+    expect(calculate(0, 4.5)).toMatchObject({
+      status: EnergyStatus.DEMAND,
+      demandKwh: '4.500',
+    });
   });
 
-  it('should handle zero consumption', () => {
-    const result = ReadingsService.calculateEnergyStatus(5, 0);
-    expect(result.status).toBe(EnergyStatus.SURPLUS);
-    expect(result.surplusKwh).toBe(5);
+  it('handles a household that consumes nothing', () => {
+    expect(calculate(8.25, 0)).toMatchObject({
+      status: EnergyStatus.SURPLUS,
+      surplusKwh: '8.250',
+    });
   });
 
-  it('should calculate correct demandKwh from demo scenario (HH-BUYER-001)', () => {
-    const result = ReadingsService.calculateEnergyStatus(1, 5);
-    expect(result.demandKwh).toBe(4);
+  it('subtracts exactly, where floating point would not', () => {
+    // 0.3 - 0.1 is 0.19999999999999998 as a double.
+    expect(calculate(0.3, 0.1)).toMatchObject({ surplusKwh: '0.200', netKwh: '0.200' });
+    // 1.005 - 1.0 is 0.004999999999999893 as a double.
+    expect(calculate(1.005, 1)).toMatchObject({ surplusKwh: '0.005' });
+    expect(calculate(0.1, 0.3)).toMatchObject({ demandKwh: '0.200' });
   });
 
-  it('should calculate correct surplusKwh from demo scenario (HH-SELLER-001)', () => {
-    const result = ReadingsService.calculateEnergyStatus(10, 3);
-    expect(result.surplusKwh).toBe(7);
+  it('accepts decimal strings as well as numbers', () => {
+    expect(calculate('10.000', '3.000')).toMatchObject({ surplusKwh: '7.000' });
+    expect(calculate('0.0003', '0')).toMatchObject({ surplusKwh: '0.000', netKwh: '0.000' });
+  });
+
+  it('keeps watt hour resolution and rounds half away from zero', () => {
+    expect(calculate(1.2345, 1)).toMatchObject({ surplusKwh: '0.235' });
+    expect(calculate(1.2355, 1)).toMatchObject({ surplusKwh: '0.236' });
+    expect(calculate(1, 1.2345)).toMatchObject({ demandKwh: '0.235' });
+  });
+
+  it('matches the demo scenario', () => {
+    expect(calculate(10, 3)).toMatchObject({ status: EnergyStatus.SURPLUS, surplusKwh: '7.000' });
+    expect(calculate(1, 5)).toMatchObject({ status: EnergyStatus.DEMAND, demandKwh: '4.000' });
   });
 });
