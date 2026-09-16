@@ -12,6 +12,10 @@ $IdemSellerId = "HH-IDEM-SELLER-$RunId"
 $IdemBuyerId = "HH-IDEM-BUYER-$RunId"
 $CorrelationId = "demo-$RunId"
 
+# The development defaults from infrastructure/docker-compose.yml.
+$OperatorToken = if ($env:OPERATOR_API_TOKEN) { $env:OPERATOR_API_TOKEN } else { "dev-operator-token-not-for-production" }
+$InternalToken = if ($env:INTERNAL_API_TOKEN) { $env:INTERNAL_API_TOKEN } else { "dev-internal-token-not-for-production" }
+
 $PassCount = 0
 $FailCount = 0
 
@@ -31,13 +35,17 @@ function Invoke-JsonApi {
     param(
         [string]$Method = "GET",
         [string]$Url,
-        [object]$Body = $null
+        [object]$Body = $null,
+        [string]$Token = $null
     )
+
+    $headers = @{ "x-correlation-id" = $CorrelationId }
+    if ($Token) { $headers["Authorization"] = "Bearer $Token" }
 
     $params = @{
         Method = $Method
         Uri = $Url
-        Headers = @{ "x-correlation-id" = $CorrelationId }
+        Headers = $headers
         ErrorAction = "Stop"
     }
 
@@ -125,9 +133,9 @@ Write-Host ""
 Write-Host "5. Waiting for match"
 $match = $null
 for ($i = 0; $i -lt 20; $i++) {
-    $matches = Invoke-JsonApi -Url "$BASE_MATCHING/matches"
+    $matches = Invoke-JsonApi -Url "$BASE_MATCHING/matches?correlationId=$CorrelationId"
     if ($matches) {
-        $match = @($matches) | Where-Object {
+        $match = @($matches.items) | Where-Object {
             $_.sellerHouseholdId -eq $SellerId -and $_.buyerHouseholdId -eq $BuyerId
         } | Select-Object -First 1
     }
@@ -163,14 +171,14 @@ Write-Host ""
 
 Write-Host "7. Ledger entries"
 $sellerLedger = Invoke-JsonApi -Url "$BASE_BILLING/ledger/$SellerId"
-if ($sellerLedger -and (@($sellerLedger) | Where-Object { $_.entryType -eq "CREDIT" } | Select-Object -First 1)) {
+if ($sellerLedger -and (@($sellerLedger.items) | Where-Object { $_.entryType -eq "CREDIT" } | Select-Object -First 1)) {
     Add-Pass "seller CREDIT ledger entry visible"
 } else {
     Add-Fail "seller CREDIT ledger entry visible"
 }
 
 $buyerLedger = Invoke-JsonApi -Url "$BASE_BILLING/ledger/$BuyerId"
-if ($buyerLedger -and (@($buyerLedger) | Where-Object { $_.entryType -eq "DEBIT" } | Select-Object -First 1)) {
+if ($buyerLedger -and (@($buyerLedger.items) | Where-Object { $_.entryType -eq "DEBIT" } | Select-Object -First 1)) {
     Add-Pass "buyer DEBIT ledger entry visible"
 } else {
     Add-Fail "buyer DEBIT ledger entry visible"
@@ -194,14 +202,44 @@ $tradeBody = @{
     completedAt = "2026-05-27T10:20:00.000Z"
 }
 
-$null = Invoke-JsonApi -Method POST -Url "$BASE_BILLING/trades" -Body $tradeBody
-$second = Invoke-JsonApi -Method POST -Url "$BASE_BILLING/trades" -Body $tradeBody
+# Recording a trade is a service-to-service call.
+$null = Invoke-JsonApi -Method POST -Url "$BASE_BILLING/trades" -Body $tradeBody -Token $InternalToken
+$second = Invoke-JsonApi -Method POST -Url "$BASE_BILLING/trades" -Body $tradeBody -Token $InternalToken
 Write-Host "Duplicate response: $($second.duplicate)"
 if ($second -and $second.duplicate -eq $true) {
     Add-Pass "duplicate idempotency check"
 } else {
     Add-Fail "duplicate idempotency check"
 }
+Write-Host ""
+
+Write-Host "9. Security and API contract"
+function Get-StatusCode {
+    param([string]$Method, [string]$Url, [string]$Token = $null, [object]$Body = $null)
+    $headers = @{ "x-correlation-id" = $CorrelationId }
+    if ($Token) { $headers["Authorization"] = "Bearer $Token" }
+    $params = @{ Method = $Method; Uri = $Url; Headers = $headers; UseBasicParsing = $true; ErrorAction = "Stop" }
+    if ($null -ne $Body) { $params.ContentType = "application/json"; $params.Body = ($Body | ConvertTo-Json -Depth 8) }
+    try { return [int](Invoke-WebRequest @params).StatusCode }
+    catch { if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode } return 0 }
+}
+
+function Assert-Status {
+    param([string]$Label, [int]$Expected, [int]$Actual)
+    Write-Host "$Label -> $Actual (expected $Expected)"
+    if ($Actual -eq $Expected) { Add-Pass $Label } else { Add-Fail $Label }
+}
+
+Assert-Status "matching run without a token is refused" 401 (Get-StatusCode -Method POST -Url "$BASE_MATCHING/matching/run")
+Assert-Status "matching run with the service token is forbidden" 403 (Get-StatusCode -Method POST -Url "$BASE_MATCHING/matching/run" -Token $InternalToken)
+Assert-Status "matching run with the operator token is allowed" 200 (Get-StatusCode -Method POST -Url "$BASE_MATCHING/matching/run" -Token $OperatorToken)
+Assert-Status "recording a trade without a token is refused" 401 (Get-StatusCode -Method POST -Url "$BASE_BILLING/trades" -Body $tradeBody)
+Assert-Status "an oversized page is rejected" 400 (Get-StatusCode -Method GET -Url "$BASE_MATCHING/matches?limit=100000")
+
+$conflictBody = $tradeBody.Clone()
+$conflictBody.energyKwh = "3.000"
+$conflictBody.totalAmount = "12.00"
+Assert-Status "the same idempotency key with a different payload is a conflict" 409 (Get-StatusCode -Method POST -Url "$BASE_BILLING/trades" -Token $InternalToken -Body $conflictBody)
 Write-Host ""
 
 Write-Host "Summary: $PassCount passed, $FailCount failed"

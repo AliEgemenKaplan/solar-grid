@@ -77,6 +77,44 @@ docker exec solar-grid-rabbitmq rabbitmqctl list_queues name messages consumers
 The management UI is at http://localhost:15672 (guest / guest), where a parked
 message can be inspected and republished once the cause is fixed.
 
+## Security
+
+- Reads and meter readings are public. Everything that changes how the market
+  behaves needs a token:
+
+  | Endpoint                                         | Token                                        |
+  | ------------------------------------------------ | -------------------------------------------- |
+  | `POST /matching/run`, `POST /prices/recalculate` | `OPERATOR_API_TOKEN`                         |
+  | `POST /trades`                                   | `INTERNAL_API_TOKEN`, sent by trade-matching |
+
+- No token is `401`, the other role's token is `403`. Tokens come from the
+  environment, are compared in constant time, and never appear in logs or
+  responses.
+- Every error has one shape - `statusCode`, `code`, `message`, `correlationId` -
+  and a 5xx never reveals what went wrong inside.
+- Unknown fields are rejected, lists are paged with a hard maximum, money is
+  validated as decimal strings, and the same idempotency key with a different
+  payload is a `409`.
+- Rate limited per client, helmet headers, CORS off unless origins are listed,
+  Swagger off in production unless enabled.
+
+[docs/api-security.md](docs/api-security.md) covers all of it.
+
+### Calling the API locally
+
+The Docker stack falls back to development tokens (they contain
+`not-for-production`, and the services warn about them at startup):
+
+```bash
+curl -i -X POST http://localhost:3003/matching/run                  # 401
+curl -s -X POST http://localhost:3003/matching/run \
+  -H "Authorization: Bearer dev-operator-token-not-for-production"   # 200
+curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"    # public, paged
+```
+
+Set real values in `infrastructure/.env` for anything that is not your own
+machine: `openssl rand -hex 32`.
+
 ## Prerequisites
 
 - Docker and Docker Compose v2
@@ -162,7 +200,11 @@ docker compose -f infrastructure/docker-compose.yml down -v --remove-orphans
 
 ## API Documentation
 
-Swagger UI is available when services are running:
+The Docker stack runs with `NODE_ENV=production`, where Swagger is off. Set
+`SWAGGER_ENABLED=true` in `infrastructure/.env` and restart to get it; when a
+service runs with `pnpm start:dev` it is on by default.
+
+Swagger UI:
 
 - Smart Meter: http://localhost:3001/api
 - Pricing Engine: http://localhost:3002/api
@@ -185,8 +227,9 @@ SolarGrid/
     trade-matching-service/
     billing-ledger-service/
   packages/
-    shared-contracts/
-    shared-utils/
+    shared-contracts/     # event and DTO types shared between services
+    shared-utils/         # decimals, ids, correlation ids
+    nest-common/          # HTTP plumbing: auth, validation, errors, pagination, rate limits
   infrastructure/
     docker-compose.yml
     .env.example
@@ -201,14 +244,15 @@ SolarGrid/
 
 ## Documentation
 
-| Doc                                                | Purpose                                                          |
-| -------------------------------------------------- | ---------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)       | Final service architecture and communication patterns            |
-| [docs/api-contracts.md](docs/api-contracts.md)     | REST endpoints and payload examples                              |
-| [docs/event-flow.md](docs/event-flow.md)           | RabbitMQ topology, routing keys, and flow                        |
-| [docs/database-design.md](docs/database-design.md) | Database tables per service                                      |
-| [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints |
-| [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                               |
+| Doc                                                | Purpose                                                                           |
+| -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)       | Final service architecture and communication patterns                             |
+| [docs/api-contracts.md](docs/api-contracts.md)     | REST endpoints and payload examples                                               |
+| [docs/event-flow.md](docs/event-flow.md)           | RabbitMQ topology, routing keys, and flow                                         |
+| [docs/database-design.md](docs/database-design.md) | Database tables per service                                                       |
+| [docs/api-security.md](docs/api-security.md)       | Authentication, validation, error contract, status codes, pagination, rate limits |
+| [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
+| [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |
 
 ## Team Contributions
 

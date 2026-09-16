@@ -22,6 +22,11 @@ IDEM_SELLER_ID="HH-IDEM-SELLER-${RUN_ID}"
 IDEM_BUYER_ID="HH-IDEM-BUYER-${RUN_ID}"
 CORRELATION_ID="demo-${RUN_ID}"
 
+# The development defaults from infrastructure/docker-compose.yml. Set the real
+# values in the environment when the stack runs with its own secrets.
+OPERATOR_TOKEN="${OPERATOR_API_TOKEN:-dev-operator-token-not-for-production}"
+INTERNAL_TOKEN="${INTERNAL_API_TOKEN:-dev-internal-token-not-for-production}"
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -50,6 +55,43 @@ request() {
   fi
 }
 
+# request_as TOKEN METHOD URL [BODY] - like request, with a bearer token
+request_as() {
+  local token="$1"
+  shift
+  local method="$1"
+  local url="$2"
+  local body="${3:-}"
+  if [ -n "$body" ]; then
+    curl -fsS -X "$method" "$url" \
+      -H "Content-Type: application/json" \
+      -H "x-correlation-id: $CORRELATION_ID" \
+      -H "Authorization: Bearer $token" \
+      -d "$body"
+  else
+    curl -fsS -X "$method" "$url" \
+      -H "x-correlation-id: $CORRELATION_ID" \
+      -H "Authorization: Bearer $token"
+  fi
+}
+
+# status_of [TOKEN|-] METHOD URL [BODY] - prints only the HTTP status code
+status_of() {
+  local token="$1"
+  shift
+  local method="$1"
+  local url="$2"
+  local body="${3:-}"
+  local auth=()
+  if [ "$token" != "-" ]; then auth=(-H "Authorization: Bearer $token"); fi
+  if [ -n "$body" ]; then
+    curl -sS -o /dev/null -w '%{http_code}' -X "$method" "$url" "${auth[@]}" \
+      -H "Content-Type: application/json" -d "$body"
+  else
+    curl -sS -o /dev/null -w '%{http_code}' -X "$method" "$url" "${auth[@]}"
+  fi
+}
+
 json_value() {
   "$PYTHON_BIN" -c 'import json, sys; data=json.load(sys.stdin); print(data.get(sys.argv[1], ""))' "$1"
 }
@@ -58,7 +100,7 @@ json_filter_match() {
   SELLER="$SELLER_ID" BUYER="$BUYER_ID" "$PYTHON_BIN" -c '
 import json, os, sys
 data = json.load(sys.stdin)
-for item in data:
+for item in data.get("items", []):
     if item.get("sellerHouseholdId") == os.environ["SELLER"] and item.get("buyerHouseholdId") == os.environ["BUYER"]:
         print(json.dumps(item))
         sys.exit(0)
@@ -70,7 +112,7 @@ json_has_ledger_entry() {
   local expected_type="$1"
   "$PYTHON_BIN" -c '
 import json, sys
-entries = json.load(sys.stdin)
+entries = json.load(sys.stdin)["items"]
 expected = sys.argv[1]
 sys.exit(0 if any(entry.get("entryType") == expected for entry in entries) else 1)
 ' "$expected_type"
@@ -138,7 +180,7 @@ echo
 echo "5. Waiting for match"
 MATCH_JSON=""
 for _ in $(seq 1 20); do
-  matches_response="$(request GET "$BASE_MATCHING/matches" 2>/dev/null || true)"
+  matches_response="$(request GET "$BASE_MATCHING/matches?correlationId=$CORRELATION_ID" 2>/dev/null || true)"
   if [ -n "$matches_response" ] && MATCH_JSON="$(printf '%s' "$matches_response" | json_filter_match 2>/dev/null)"; then
     break
   fi
@@ -195,8 +237,8 @@ idem_key="demo-idem-${RUN_ID}"
 idem_trade_id="TRD-DEMO-${RUN_ID}"
 # Money and energy cross this boundary as decimal strings, not JSON numbers.
 idem_body="{\"tradeId\":\"$idem_trade_id\",\"sellerHouseholdId\":\"$IDEM_SELLER_ID\",\"buyerHouseholdId\":\"$IDEM_BUYER_ID\",\"energyKwh\":\"2.000\",\"pricePerKwh\":\"4.0000\",\"totalAmount\":\"8.00\",\"currency\":\"TRY\",\"idempotencyKey\":\"$idem_key\",\"correlationId\":\"$CORRELATION_ID\",\"completedAt\":\"2026-05-27T10:20:00.000Z\"}"
-first_idem="$(request POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
-second_idem="$(request POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
+first_idem="$(request_as "$INTERNAL_TOKEN" POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
+second_idem="$(request_as "$INTERNAL_TOKEN" POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
 duplicate="$(printf '%s' "$second_idem" | json_value duplicate 2>/dev/null || true)"
 echo "Duplicate response: $duplicate"
 [ "$duplicate" = "True" ] || [ "$duplicate" = "true" ] && pass "duplicate idempotency check" || fail "duplicate idempotency check"
@@ -210,6 +252,42 @@ if printf '%s' "$balance_raw" | grep -qE '^-?[0-9]+\.[0-9]{2}$' && printf '%s' "
   pass "money and price returned as fixed-scale decimal strings"
 else
   fail "money and price returned as fixed-scale decimal strings"
+fi
+echo
+
+echo "10. Security and API contract"
+check_status() {
+  local label="$1" expected="$2" actual="$3"
+  echo "$label -> $actual (expected $expected)"
+  [ "$actual" = "$expected" ] && pass "$label" || fail "$label"
+}
+
+check_status "matching run without a token is refused" 401 \
+  "$(status_of - POST "$BASE_MATCHING/matching/run")"
+check_status "matching run with the service token is forbidden" 403 \
+  "$(status_of "$INTERNAL_TOKEN" POST "$BASE_MATCHING/matching/run")"
+check_status "matching run with the operator token is allowed" 200 \
+  "$(status_of "$OPERATOR_TOKEN" POST "$BASE_MATCHING/matching/run")"
+check_status "recording a trade without a token is refused" 401 \
+  "$(status_of - POST "$BASE_BILLING/trades" "$idem_body")"
+check_status "an oversized page is rejected" 400 \
+  "$(status_of - GET "$BASE_MATCHING/matches?limit=100000")"
+
+conflict_body="${idem_body/\"energyKwh\":\"2.000\"/\"energyKwh\":\"3.000\"}"
+conflict_body="${conflict_body/\"totalAmount\":\"8.00\"/\"totalAmount\":\"12.00\"}"
+check_status "the same idempotency key with a different payload is a conflict" 409 \
+  "$(status_of "$INTERNAL_TOKEN" POST "$BASE_BILLING/trades" "$conflict_body")"
+
+error_body="$(curl -sS -X POST "$BASE_MATCHING/matching/run" -H "x-correlation-id: $CORRELATION_ID")"
+if ERROR_BODY="$error_body" CID="$CORRELATION_ID" "$PYTHON_BIN" -c '
+import json, os, sys
+body = json.loads(os.environ["ERROR_BODY"])
+ok = body.get("code") == "UNAUTHENTICATED" and body.get("correlationId") == os.environ["CID"] and "stack" not in body
+sys.exit(0 if ok else 1)
+'; then
+  pass "error responses carry a code and the correlation id, and no stack trace"
+else
+  fail "error responses carry a code and the correlation id, and no stack trace"
 fi
 echo
 

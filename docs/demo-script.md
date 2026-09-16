@@ -58,6 +58,15 @@ The script verifies:
 6. Buyer balance becomes negative.
 7. Seller ledger contains a `CREDIT` entry.
 8. Buyer ledger contains a `DEBIT` entry.
-9. Posting the same billing trade twice returns `duplicate: true`.
+9. Posting the same billing trade twice, with the internal service token, returns `duplicate: true`.
+10. Money and prices come back as fixed-scale decimal strings.
+11. `POST /matching/run` without a token is `401`, with the service token `403`, with the operator token `200`.
+12. `POST /trades` without a token is `401`.
+13. `GET /matches?limit=100000` is `400`.
+14. The same idempotency key with a different payload is `409`.
+15. An error body carries a `code` and the request's correlation id, and no stack trace.
+
+The scripts read `OPERATOR_API_TOKEN` and `INTERNAL_API_TOKEN` from the
+environment and fall back to the development defaults the compose file uses.
 
 The script prints a final `Summary: N passed, M failed` line and exits with status `1` if any required check fails.

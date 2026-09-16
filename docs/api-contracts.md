@@ -1,36 +1,29 @@
-# Solar Grid — API Contracts
+# Solar Grid - API Contracts
 
-## Decimal values
+Authentication, validation, the error body, status codes, pagination and rate
+limits are the same everywhere and are described once, in
+[api-security.md](api-security.md). This document lists the endpoints.
 
-Money and energy are returned as **fixed-scale decimal strings**, never JSON
-numbers, because a JSON number is a double and a double cannot hold `0.1` or
-`4.0001` exactly.
+## Conventions in brief
 
-| Kind          | Scale | Example    |
-| ------------- | ----- | ---------- |
-| Energy (kWh)  | 3     | `"7.000"`  |
-| Price per kWh | 4     | `"4.0000"` |
-| Money (TRY)   | 2     | `"16.00"`  |
+- **Decimals are strings.** Energy has 3 decimals (`"7.000"`), prices 4
+  (`"4.0000"`), money 2 (`"16.00"`). A JSON number is a double and cannot hold
+  every amount exactly. `POST /trades` also takes them as strings; meter
+  readings and pricing aggregates still take JSON numbers.
+- **Lists are paged.** `?page=1&limit=50`, maximum 100, and the response is
+  `{ "items": [], "page": 1, "limit": 50, "total": 0 }`.
+- **Errors** have `statusCode`, `code`, `message`, `correlationId`, `timestamp`,
+  `path` and sometimes `details`.
+- **`x-correlation-id`** may be sent with any request and is always returned.
+- **Swagger** is at `http://localhost:<port>/api` when enabled.
 
-Requests follow the same rule where the value is financial: `POST /trades`
-takes decimal strings. Meter readings and pricing aggregates still accept JSON
-numbers, since they come from instruments rather than from a ledger, and are
-converted to decimals on arrival.
-
----
-
-All services support the `x-correlation-id` request header for distributed tracing. Trade Matching forwards this header when calling Pricing and Billing.
-Swagger UI is available at `http://localhost:<port>/api` for each service.
+Access: 🌐 public · 🔑 operator token · 🔒 internal service token
 
 ---
 
 ## smart-meter-service (port 3001)
 
-### POST /readings
-
-Submit a smart meter reading.
-
-**Request:**
+### 🌐 POST /readings
 
 ```json
 {
@@ -41,41 +34,40 @@ Submit a smart meter reading.
 }
 ```
 
-**Response (201):**
+`201` the first time, `200` for the same household and timestamp again:
 
 ```json
 {
-  "id": "clxxxxx",
+  "id": "clx...",
   "householdId": "HH-001",
   "productionKwh": "8.500",
   "consumptionKwh": "3.200",
   "netKwh": "5.300",
   "status": "SURPLUS",
-  "surplusKwh": "5.300",
-  "demandKwh": "0.000",
   "timestamp": "2026-05-27T10:00:00.000Z",
   "createdAt": "2026-05-27T10:00:01.000Z",
+  "surplusKwh": "5.300",
+  "demandKwh": "0.000",
   "duplicate": false
 }
 ```
 
-A household reports one reading per timestamp. Re-sending the same
-`householdId` and `timestamp` returns the stored reading with
-`"duplicate": true` and publishes no second event.
+`400` invalid input · `422` a reading from the future · `429` too many writes.
 
-### GET /readings/:householdId
+### 🌐 GET /readings/:householdId
 
-Returns last 100 readings for a household, newest first.
+Paged `ReadingSummary` items (the reading without `surplusKwh`, `demandKwh`,
+`duplicate`), newest first.
 
-### GET /households/:householdId/status
+### 🌐 GET /households
 
-Returns the current energy status.
+Paged household statuses, most recently active first. Filter: `status`
+(`SURPLUS`, `DEMAND`, `BALANCED`).
 
-**Response (200):**
+### 🌐 GET /households/:householdId/status
 
 ```json
 {
-  "id": "clxxxxx",
   "householdId": "HH-001",
   "currentStatus": "SURPLUS",
   "currentSurplusKwh": "5.300",
@@ -85,17 +77,13 @@ Returns the current energy status.
 }
 ```
 
-### GET /health
-
-```json
-{ "status": "ok", "service": "smart-meter-service", "timestamp": "..." }
-```
+`404` when the household has never reported.
 
 ---
 
 ## pricing-engine-service (port 3002)
 
-### GET /prices/current
+### 🌐 GET /prices/current
 
 ```json
 {
@@ -107,122 +95,161 @@ Returns the current energy status.
 }
 ```
 
-### POST /prices/recalculate
+### 🔑 POST /prices/recalculate
 
-**Request:**
+```json
+{ "totalSupplyKwh": 50, "totalDemandKwh": 40 }
+```
+
+`201` with the new price, same shape as `GET /prices/current`. `401` / `403`
+without the operator token.
+
+### 🌐 GET /prices/history
+
+Paged snapshots, newest first:
+`{ id, totalSupplyKwh, totalDemandKwh, calculatedPrice, currency, createdAt }`.
+
+---
+
+## trade-matching-service (port 3003)
+
+### 🔑 POST /matching/run
+
+Settles trades left unconfirmed by earlier runs, then matches. `200`:
+
+```json
+{ "matched": 1, "failed": 0, "skipped": 0, "pending": 0, "settled": 0 }
+```
+
+| Field     | Meaning                                                         |
+| --------- | --------------------------------------------------------------- |
+| `matched` | trades reserved and billed during this run                      |
+| `failed`  | trades billing refused; their energy was released               |
+| `skipped` | pairs skipped because a household would trade with itself       |
+| `pending` | trades reserved whose billing answer never arrived              |
+| `settled` | trades reserved by an earlier run and confirmed during this one |
+
+`503 DOWNSTREAM_UNAVAILABLE` when pricing does not answer; nothing was reserved.
+
+### 🌐 GET /matches
+
+Paged trade matches, newest first. Filters: `status` (`PENDING_BILLING`,
+`COMPLETED`, `FAILED`), `correlationId`.
 
 ```json
 {
-  "totalSupplyKwh": 50,
-  "totalDemandKwh": 40
+  "id": "clx...",
+  "tradeId": "TRD-5F1A2B3C4D5E",
+  "sellerHouseholdId": "HH-SELLER-001",
+  "buyerHouseholdId": "HH-BUYER-001",
+  "energyKwh": "4.000",
+  "pricePerKwh": "4.0000",
+  "totalAmount": "16.00",
+  "currency": "TRY",
+  "status": "COMPLETED",
+  "billingTradeId": "TRD-5F1A2B3C4D5E",
+  "offerId": "clx...",
+  "requestId": "clx...",
+  "idempotencyKey": "TRD-5F1A2B3C4D5E",
+  "billingAttempts": 1,
+  "correlationId": "demo-flow-001",
+  "failureReason": null,
+  "createdAt": "...",
+  "updatedAt": "..."
 }
 ```
 
-**Response (201):** Same shape as `GET /prices/current`.
+### 🌐 GET /matches/:tradeId
 
-### GET /prices/history?limit=50
+One trade match. `404` if it does not exist.
 
-Returns array of price snapshots, newest first.
+### 🌐 GET /offers · 🌐 GET /requests
 
-### GET /health
-
-```json
-{ "status": "ok", "service": "pricing-engine-service", "timestamp": "..." }
-```
+Paged sell offers and buy requests, newest first. Filters: `status` (`OPEN`,
+`PARTIALLY_MATCHED`, `MATCHED`, `CANCELLED`), `correlationId`. Offers carry
+`availableKwh` and `originalKwh`; requests carry `requestedKwh` and
+`originalKwh`.
 
 ---
 
 ## billing-ledger-service (port 3004)
 
-### POST /trades
+### 🔒 POST /trades
 
-Record a completed trade (idempotent via `idempotencyKey`).
-
-**Request:**
+Called by trade-matching-service.
 
 ```json
 {
-  "tradeId": "TRD-001",
+  "tradeId": "TRD-5F1A2B3C4D5E",
   "sellerHouseholdId": "HH-SELLER-001",
   "buyerHouseholdId": "HH-BUYER-001",
   "energyKwh": "4.000",
   "pricePerKwh": "4.7500",
   "totalAmount": "19.00",
   "currency": "TRY",
-  "idempotencyKey": "match-uuid-001",
-  "correlationId": "flow-uuid-001",
+  "idempotencyKey": "TRD-5F1A2B3C4D5E",
+  "correlationId": "demo-flow-001",
   "completedAt": "2026-05-27T10:10:00.000Z"
 }
 ```
 
-**Response (201):**
+| Outcome                                                                       | Status                                     |
+| ----------------------------------------------------------------------------- | ------------------------------------------ |
+| Recorded                                                                      | `201`, `duplicate: false`                  |
+| Same key, same payload                                                        | `200`, the stored trade, `duplicate: true` |
+| Same key, different payload                                                   | `409 IDEMPOTENCY_CONFLICT`                 |
+| Same `tradeId`, different key                                                 | `409 CONFLICT`                             |
+| Seller and buyer are the same household                                       | `422`                                      |
+| `totalAmount` is not `energyKwh × pricePerKwh`, rounded half up to 2 decimals | `422`                                      |
+| Invalid decimal, currency other than `TRY`, unknown field                     | `400`                                      |
+| No token / operator token                                                     | `401` / `403`                              |
 
-```json
-{
-  "id": "clxxxxx",
-  "tradeId": "TRD-001",
-  ...
-  "duplicate": false
-}
-```
+### 🌐 GET /trades
 
-If the `idempotencyKey` already exists: response includes `"duplicate": true` and returns the original trade — no new ledger entries are created.
+Paged completed trades, newest first. Filters: `householdId` (seller or buyer),
+`correlationId`.
 
-### GET /trades/:tradeId
+### 🌐 GET /trades/:tradeId
 
-### GET /trades/household/:householdId
+One completed trade. `404` if it does not exist.
 
-### GET /balances/:householdId
+### 🌐 GET /trades/household/:householdId
+
+Paged trades where the household is the seller or the buyer.
+
+### 🌐 GET /balances/:householdId
 
 ```json
 { "householdId": "HH-SELLER-001", "balance": "19.00", "currency": "TRY", "updatedAt": "..." }
 ```
 
-### GET /ledger/:householdId
+A household with no trades has a balance of `"0.00"` and `updatedAt: null`.
+Billing keeps no household registry, so "never traded" and "unknown" are the
+same answer.
 
-Returns immutable ledger entries (CREDIT/DEBIT), newest first.
+### 🌐 GET /ledger/:householdId
 
-### GET /health
+Paged, append-only entries, newest first. Filter: `correlationId`.
+
+```json
+{
+  "id": "clx...",
+  "tradeId": "TRD-5F1A2B3C4D5E",
+  "householdId": "HH-SELLER-001",
+  "entryType": "CREDIT",
+  "amount": "19.00",
+  "currency": "TRY",
+  "correlationId": "demo-flow-001",
+  "createdAt": "..."
+}
+```
 
 ---
 
-## trade-matching-service (port 3003)
+## Every service
 
-### GET /offers
-
-All sell offers with status.
-
-### GET /requests
-
-All buy requests with status.
-
-### GET /matches
-
-All trade matches.
-
-### GET /matches/:tradeId
-
-Single trade match by trade ID.
-
-### POST /matching/run
-
-Manually trigger FIFO matching. Safe to call while events are being consumed:
-reservations are serialised, so a concurrent run cannot sell the same energy.
-
-**Response (201):**
+### 🌐 GET /health
 
 ```json
-{ "matched": 1, "failed": 0, "skipped": 0, "pending": 0, "settled": 0 }
+{ "status": "ok", "service": "billing-ledger-service", "timestamp": "..." }
 ```
-
-| Field     | Meaning                                                     |
-| --------- | ----------------------------------------------------------- |
-| `matched` | trades reserved and billed during this run                  |
-| `failed`  | trades billing refused; their energy was released           |
-| `skipped` | pairs skipped because a household would trade with itself   |
-| `pending` | trades reserved whose billing answer never arrived          |
-| `settled` | trades reserved by an earlier run and confirmed in this one |
-
-A trade match is `PENDING_BILLING`, `COMPLETED` or `FAILED`.
-
-### GET /health
