@@ -73,7 +73,9 @@ model IdempotencyKey {
   id           String         @id @default(cuid())
   key          String         @unique
   tradeId      String
-  responseHash String?
+  /// SHA-256 of the canonical request. The same key with a different hash is
+  /// a conflict, not a retry.
+  requestHash  String?
   createdAt    DateTime       @default(now())
 
   trade        CompletedTrade @relation(fields: [tradeId], references: [tradeId])

@@ -1,71 +1,77 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsIn, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsDateString, IsIn, IsString, Matches } from 'class-validator';
 import { ENERGY_SCALE, MONEY_SCALE, PRICE_SCALE } from '@solar-grid/shared-utils';
-import { IsDecimalAmount } from '../../common/is-decimal-amount.decorator';
+import {
+  CORRELATION_ID_PATTERN,
+  DecimalAmountField,
+  SafeIdentifier,
+} from '@solar-grid/nest-common';
 
 /** The only currency this neighbourhood trades in. */
-const SUPPORTED_CURRENCIES = ['TRY'];
+export const SUPPORTED_CURRENCIES = ['TRY'] as const;
 
+/**
+ * A completed trade, as trade-matching-service reports it.
+ *
+ * Nothing here is trusted just because it arrived: the amounts are validated
+ * as decimal strings, the total is recomputed from the energy and the price,
+ * and a household cannot appear on both sides.
+ */
 export class CreateTradeDto {
-  @ApiProperty({ example: 'TRD-001' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(64)
+  @SafeIdentifier('Trade identifier', 'TRD-5F1A2B3C4D5E')
   tradeId!: string;
 
-  @ApiProperty({ example: 'HH-SELLER-001' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(64)
+  @SafeIdentifier('Household selling the energy', 'HH-SELLER-001')
   sellerHouseholdId!: string;
 
-  @ApiProperty({ example: 'HH-BUYER-001' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(64)
+  @SafeIdentifier('Household buying the energy', 'HH-BUYER-001')
   buyerHouseholdId!: string;
 
-  @ApiProperty({
+  @DecimalAmountField({
+    min: '0.001',
+    max: '1000000',
+    scale: ENERGY_SCALE,
     example: '4.000',
-    description: 'kWh as a decimal string, at most 3 decimal places',
+    description: 'Energy traded, in kWh',
   })
-  @IsDecimalAmount({ min: '0.001', max: '1000000', scale: ENERGY_SCALE })
   energyKwh!: string;
 
-  @ApiProperty({
+  @DecimalAmountField({
+    min: '0.0001',
+    max: '1000000',
+    scale: PRICE_SCALE,
     example: '4.7500',
-    description: 'Price per kWh as a decimal string, at most 4 decimal places',
+    description: 'Price per kWh',
   })
-  @IsDecimalAmount({ min: '0.0001', max: '1000000', scale: PRICE_SCALE })
   pricePerKwh!: string;
 
-  @ApiProperty({
+  @DecimalAmountField({
+    min: '0',
+    max: '1000000000',
+    scale: MONEY_SCALE,
     example: '19.00',
-    description: 'energyKwh * pricePerKwh as a decimal string, at most 2 decimal places',
+    description: 'energyKwh multiplied by pricePerKwh, rounded half up to 2 decimals',
   })
-  @IsDecimalAmount({ min: '0', max: '1000000000', scale: MONEY_SCALE })
   totalAmount!: string;
 
-  @ApiProperty({ example: 'TRY' })
+  @ApiProperty({ example: 'TRY', enum: SUPPORTED_CURRENCIES })
   @IsIn(SUPPORTED_CURRENCIES)
   currency!: string;
 
-  @ApiProperty({
-    example: 'TRD-001',
-    description: 'Stable for the lifetime of the trade; a retry carries the same key',
-  })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(128)
+  @SafeIdentifier(
+    'Stable for the lifetime of the trade. A retry carries the same key and the same payload.',
+    'TRD-5F1A2B3C4D5E',
+  )
   idempotencyKey!: string;
 
-  @ApiProperty({ example: 'flow-uuid-001' })
+  @ApiProperty({ example: 'demo-flow-001', pattern: CORRELATION_ID_PATTERN.source })
   @IsString()
-  @IsNotEmpty()
-  @MaxLength(128)
+  @Matches(CORRELATION_ID_PATTERN, {
+    message: 'correlationId must be 1-128 characters of letters, digits, ".", "_", ":" or "-"',
+  })
   correlationId!: string;
 
-  @ApiProperty({ example: '2026-05-27T10:10:00.000Z' })
-  @IsDateString()
+  @ApiProperty({ example: '2026-05-27T10:10:00.000Z', format: 'date-time' })
+  @IsDateString({ strict: true })
   completedAt!: string;
 }

@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import { BadRequestException } from '@nestjs/common';
+import { BusinessRuleViolationException } from '@solar-grid/nest-common';
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { PrismaClient } from '../generated/client';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -100,7 +100,7 @@ describe('billing against a real database', () => {
 
   describe('settling a trade', () => {
     it('writes one credit, one debit and both balances', async () => {
-      const result = await service.createTrade(trade());
+      const { trade: result } = await service.createTrade(trade());
 
       expect(result?.duplicate).toBe(false);
       expect(result?.totalAmount).toBe('16.00');
@@ -123,7 +123,7 @@ describe('billing against a real database', () => {
 
     it('settles the same trade only once when it is sent twice', async () => {
       await service.createTrade(trade());
-      const second = await service.createTrade(trade());
+      const { trade: second } = await service.createTrade(trade());
 
       expect(second?.duplicate).toBe(true);
       expect(await prisma.completedTrade.count()).toBe(1);
@@ -154,10 +154,22 @@ describe('billing against a real database', () => {
 
     it('adds up amounts exactly, where floating point would drift', async () => {
       await service.createTrade(
-        trade({ tradeId: 'TRD-A', idempotencyKey: 'TRD-A', totalAmount: '0.10' }),
+        // 0.025 kWh at 4.0000 is 0.10: billing now checks that the total is
+        // the energy times the price, so the amounts have to agree.
+        trade({
+          tradeId: 'TRD-A',
+          idempotencyKey: 'TRD-A',
+          energyKwh: '0.025',
+          totalAmount: '0.10',
+        }),
       );
       await service.createTrade(
-        trade({ tradeId: 'TRD-B', idempotencyKey: 'TRD-B', totalAmount: '0.20' }),
+        trade({
+          tradeId: 'TRD-B',
+          idempotencyKey: 'TRD-B',
+          energyKwh: '0.050',
+          totalAmount: '0.20',
+        }),
       );
 
       const seller = await prisma.householdBalance.findUniqueOrThrow({
@@ -191,7 +203,7 @@ describe('billing against a real database', () => {
     it('rejects a household trading with itself, in the service and in the schema', async () => {
       await expect(
         service.createTrade(trade({ buyerHouseholdId: 'HH-SELLER' })),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toBeInstanceOf(BusinessRuleViolationException);
 
       await expect(
         prisma.completedTrade.create({

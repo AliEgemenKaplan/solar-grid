@@ -1,9 +1,26 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTradeDto } from './dto/create-trade.dto';
-import { formatEnergy, formatMoney, formatPrice } from '@solar-grid/shared-utils';
+import { CompletedTradeResponse, TradeListQuery } from './dto/trade.responses';
+import { differingFields, expectedTotal, tradeRequestFingerprint } from './request-fingerprint';
+import { formatEnergy, formatMoney, formatPrice, MONEY_SCALE } from '@solar-grid/shared-utils';
+import {
+  BusinessRuleViolationException,
+  IdempotencyConflictException,
+  Page,
+  pageWindow,
+  ResourceConflictException,
+  ResourceNotFoundException,
+  toPage,
+} from '@solar-grid/nest-common';
 import { CompletedTrade, Prisma } from '../../generated/client';
+
+export interface RecordedTrade {
+  trade: CompletedTradeResponse;
+  /** False when the idempotency key was already recorded and the stored trade is returned. */
+  created: boolean;
+}
 
 @Injectable()
 export class TradesService {
@@ -11,33 +28,26 @@ export class TradesService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async createTrade(dto: CreateTradeDto) {
-    if (dto.sellerHouseholdId === dto.buyerHouseholdId) {
-      // The database refuses this too; answering here turns a constraint
-      // violation into an answer the caller can act on.
-      throw new BadRequestException('A household cannot trade with itself');
-    }
+  /**
+   * Records a completed trade exactly once.
+   *
+   *   same key, same payload       → the stored trade, created: false
+   *   same key, different payload  → 409 IDEMPOTENCY_CONFLICT
+   *   same trade id, different key → 409 CONFLICT
+   *   impossible trade             → 422 BUSINESS_RULE_VIOLATION
+   */
+  async createTrade(dto: CreateTradeDto): Promise<RecordedTrade> {
+    this.assertBusinessRules(dto);
 
-    // Check for existing idempotency key - return existing trade if duplicate
-    const existingKey = await this.prisma.idempotencyKey.findUnique({
-      where: { key: dto.idempotencyKey },
-    });
+    const fingerprint = tradeRequestFingerprint(dto);
 
-    if (existingKey) {
-      this.logger.warn(
-        `Duplicate trade rejected: idempotencyKey=${dto.idempotencyKey} tradeId=${existingKey.tradeId} [cid=${dto.correlationId}]`,
-      );
-      const existingTrade = await this.prisma.completedTrade.findUnique({
-        where: { tradeId: existingKey.tradeId },
-      });
-      return existingTrade ? toTradeResponse(existingTrade, true) : null;
-    }
+    const replay = await this.findReplay(dto, fingerprint);
+    if (replay) return { trade: replay, created: false };
 
     this.logger.log(
       `Recording trade: tradeId=${dto.tradeId} seller=${dto.sellerHouseholdId} buyer=${dto.buyerHouseholdId} amount=${dto.totalAmount} ${dto.currency} [cid=${dto.correlationId}]`,
     );
 
-    // Atomic transaction: trade record + ledger entries + idempotency key + balance updates
     try {
       const trade = await this.prisma.$transaction(async (tx) => {
         const completedTrade = await tx.completedTrade.create({
@@ -59,6 +69,7 @@ export class TradesService {
           data: {
             key: dto.idempotencyKey,
             tradeId: dto.tradeId,
+            requestHash: fingerprint,
           },
         });
 
@@ -90,7 +101,7 @@ export class TradesService {
         // Two trades running in opposite directions between the same pair
         // would otherwise each hold the row the other needs, and Postgres
         // would break the deadlock by killing one of them.
-        const debit = new Decimal(dto.totalAmount).negated().toFixed(2);
+        const debit = new Decimal(dto.totalAmount).negated().toFixed(MONEY_SCALE);
         const movements = [
           { householdId: dto.sellerHouseholdId, delta: dto.totalAmount },
           { householdId: dto.buyerHouseholdId, delta: debit },
@@ -112,48 +123,114 @@ export class TradesService {
       });
 
       this.logger.log(
-        `Trade recorded successfully: tradeId=${dto.tradeId} seller+${dto.totalAmount} buyer-${dto.totalAmount} [cid=${dto.correlationId}]`,
+        `Trade recorded: tradeId=${dto.tradeId} seller+${dto.totalAmount} buyer-${dto.totalAmount} [cid=${dto.correlationId}]`,
       );
-
-      return toTradeResponse(trade, false);
+      return { trade: toTradeResponse(trade, false), created: true };
     } catch (err) {
-      // Checking for the key before inserting leaves a gap: two requests
-      // carrying the same key can both pass the check. The unique index is
-      // what actually decides, so the request that loses the race reports the
-      // winner's trade instead of a 500.
-      if (isUniqueViolation(err)) {
-        const winner = await this.prisma.completedTrade.findUnique({
-          where: { tradeId: dto.tradeId },
-        });
-        if (winner) {
-          this.logger.warn(
-            `Concurrent duplicate trade resolved: idempotencyKey=${dto.idempotencyKey} tradeId=${dto.tradeId} [cid=${dto.correlationId}]`,
-          );
-          return toTradeResponse(winner, true);
-        }
-      }
-      throw err;
+      if (!isUniqueViolation(err)) throw err;
+
+      // Another request got there first. If it carried the same key, this is
+      // a replay and gets the same answer (or a conflict, if the payloads
+      // differ). If not, the trade id is already taken under another key.
+      const replayAfterRace = await this.findReplay(dto, fingerprint);
+      if (replayAfterRace) return { trade: replayAfterRace, created: false };
+
+      throw new ResourceConflictException(
+        `Trade ${dto.tradeId} has already been recorded under a different idempotency key.`,
+      );
     }
   }
 
-  async getTradeById(tradeId: string) {
+  async getTradeById(tradeId: string): Promise<CompletedTradeResponse> {
     const trade = await this.prisma.completedTrade.findUnique({ where: { tradeId } });
-    return trade ? toTradeResponse(trade, false) : null;
+    if (!trade) throw new ResourceNotFoundException(`Trade ${tradeId} does not exist.`);
+    return toTradeResponse(trade, false);
   }
 
-  async getTradesByHousehold(householdId: string) {
-    const trades = await this.prisma.completedTrade.findMany({
-      where: {
-        OR: [{ sellerHouseholdId: householdId }, { buyerHouseholdId: householdId }],
-      },
-      orderBy: { completedAt: 'desc' },
+  async listTrades(query: TradeListQuery): Promise<Page<CompletedTradeResponse>> {
+    const where: Prisma.CompletedTradeWhereInput = {
+      ...(query.householdId
+        ? {
+            OR: [{ sellerHouseholdId: query.householdId }, { buyerHouseholdId: query.householdId }],
+          }
+        : {}),
+      ...(query.correlationId ? { correlationId: query.correlationId } : {}),
+    };
+
+    const [trades, total] = await this.prisma.$transaction([
+      this.prisma.completedTrade.findMany({
+        where,
+        // id breaks ties so the same page never shows a row twice.
+        orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
+        ...pageWindow(query),
+      }),
+      this.prisma.completedTrade.count({ where }),
+    ]);
+
+    return toPage(
+      trades.map((trade) => toTradeResponse(trade, false)),
+      total,
+      query,
+    );
+  }
+
+  /**
+   * A household trading with itself, or a total that is not the energy times
+   * the price, is well formed and still impossible. Both are also refused by
+   * the database; answering here gives the caller a reason instead of a 500.
+   */
+  private assertBusinessRules(dto: CreateTradeDto): void {
+    if (dto.sellerHouseholdId === dto.buyerHouseholdId) {
+      throw new BusinessRuleViolationException('A household cannot trade with itself.');
+    }
+
+    const expected = expectedTotal(dto.energyKwh, dto.pricePerKwh);
+    const received = formatMoney(dto.totalAmount);
+    if (received !== expected) {
+      throw new BusinessRuleViolationException(
+        'totalAmount does not equal energyKwh multiplied by pricePerKwh.',
+        [`expected ${expected}, received ${received}`],
+      );
+    }
+  }
+
+  /**
+   * The stored trade when this key has been recorded with the same request,
+   * null when the key is new, and a conflict when the key was used for
+   * something else.
+   */
+  private async findReplay(
+    dto: CreateTradeDto,
+    fingerprint: string,
+  ): Promise<CompletedTradeResponse | null> {
+    const existing = await this.prisma.idempotencyKey.findUnique({
+      where: { key: dto.idempotencyKey },
+      include: { trade: true },
     });
-    return trades.map((trade) => toTradeResponse(trade, false));
+    if (!existing) return null;
+
+    // A key recorded before request hashing existed has no hash to compare,
+    // and is treated as a match rather than breaking old retries.
+    if (existing.requestHash && existing.requestHash !== fingerprint) {
+      const fields = differingFields(existing.trade, dto);
+      this.logger.warn(
+        `Idempotency conflict: key=${dto.idempotencyKey} differs in ${fields.join(', ') || 'payload'} [cid=${dto.correlationId}]`,
+      );
+      throw new IdempotencyConflictException(
+        'This idempotency key was already used for a different trade.',
+        fields.map((field) => `${field} differs from the recorded trade`),
+      );
+    }
+
+    this.logger.warn(
+      `Duplicate trade request answered from the ledger: key=${dto.idempotencyKey} tradeId=${existing.tradeId} [cid=${dto.correlationId}]`,
+    );
+    return toTradeResponse(existing.trade, true);
   }
 }
 
 /** Money and energy leave this service as fixed-scale decimal strings. */
-function toTradeResponse(trade: CompletedTrade, duplicate: boolean) {
+export function toTradeResponse(trade: CompletedTrade, duplicate: boolean): CompletedTradeResponse {
   return {
     id: trade.id,
     tradeId: trade.tradeId,

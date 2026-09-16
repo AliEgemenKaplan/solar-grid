@@ -1,33 +1,19 @@
-import { Controller, Get, Param, Logger } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { PrismaService } from '../prisma/prisma.service';
-import { formatMoney } from '@solar-grid/shared-utils';
+import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiErrorResponse, ApiPageResponse, HouseholdIdParam } from '@solar-grid/nest-common';
+import { LedgerService } from './ledger.service';
+import { LedgerEntryResponse, LedgerQuery } from '../trades/dto/trade.responses';
 
 @ApiTags('Ledger')
 @Controller('ledger')
 export class LedgerController {
-  private readonly logger = new Logger(LedgerController.name);
-
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly ledger: LedgerService) {}
 
   @Get(':householdId')
-  @ApiOperation({ summary: 'Get immutable ledger entries for a household' })
-  @ApiResponse({ status: 200, description: 'List of CREDIT and DEBIT ledger entries' })
-  async getLedger(@Param('householdId') householdId: string) {
-    this.logger.log(`GET /ledger/${householdId}`);
-    const entries = await this.prisma.ledgerEntry.findMany({
-      where: { householdId },
-      orderBy: { createdAt: 'desc' },
-    });
-    return entries.map((entry) => ({
-      id: entry.id,
-      tradeId: entry.tradeId,
-      householdId: entry.householdId,
-      entryType: entry.entryType,
-      amount: formatMoney(entry.amount),
-      currency: entry.currency,
-      correlationId: entry.correlationId,
-      createdAt: entry.createdAt.toISOString(),
-    }));
+  @ApiOperation({ summary: 'Append-only ledger entries for a household, newest first' })
+  @ApiPageResponse(LedgerEntryResponse)
+  @ApiBadRequestResponse({ type: ApiErrorResponse })
+  list(@Param() { householdId }: HouseholdIdParam, @Query() query: LedgerQuery) {
+    return this.ledger.listEntries(householdId, query);
   }
 }
