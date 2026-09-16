@@ -5,6 +5,8 @@ import { RecalculatePriceDto } from './dto/recalculate-price.dto';
 import { PriceResponseDto } from '@solar-grid/shared-contracts';
 import { DecimalLike, formatEnergy, formatPrice, PRICE_SCALE } from '@solar-grid/shared-utils';
 import { PriceSnapshot } from '../../generated/client';
+import { Page, PaginationQuery, pageWindow, toPage } from '@solar-grid/nest-common';
+import { PriceSnapshotResponse } from './dto/price.responses';
 
 export interface PricingBand {
   basePrice: DecimalLike;
@@ -101,12 +103,16 @@ export class PricesService implements OnModuleInit {
     return toPriceResponse(snapshot);
   }
 
-  async getPriceHistory(limit = 50) {
-    const snapshots = await this.prisma.priceSnapshot.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-    return snapshots.map((snapshot) => ({
+  /** Served by the createdAt index. */
+  async getPriceHistory(query: PaginationQuery): Promise<Page<PriceSnapshotResponse>> {
+    const [snapshots, total] = await this.prisma.$transaction([
+      this.prisma.priceSnapshot.findMany({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        ...pageWindow(query),
+      }),
+      this.prisma.priceSnapshot.count(),
+    ]);
+    const items = snapshots.map((snapshot) => ({
       id: snapshot.id,
       totalSupplyKwh: formatEnergy(snapshot.totalSupplyKwh),
       totalDemandKwh: formatEnergy(snapshot.totalDemandKwh),
@@ -114,6 +120,7 @@ export class PricesService implements OnModuleInit {
       currency: snapshot.currency,
       createdAt: snapshot.createdAt.toISOString(),
     }));
+    return toPage(items, total, query);
   }
 
   private async getActiveRule() {

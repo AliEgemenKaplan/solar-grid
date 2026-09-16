@@ -1,3 +1,4 @@
+import { BusinessRuleViolationException } from '@solar-grid/nest-common';
 import { EnergyStatus, ReadingsService } from '../src/readings/readings.service';
 
 const calculate = ReadingsService.calculateEnergyStatus;
@@ -66,5 +67,23 @@ describe('ReadingsService.calculateEnergyStatus', () => {
   it('matches the demo scenario', () => {
     expect(calculate(10, 3)).toMatchObject({ status: EnergyStatus.SURPLUS, surplusKwh: '7.000' });
     expect(calculate(1, 5)).toMatchObject({ status: EnergyStatus.DEMAND, demandKwh: '4.000' });
+  });
+});
+
+describe('ReadingsService.createReading - business rules', () => {
+  it('refuses a reading from the future before touching the database', async () => {
+    const prisma: any = { meterReading: { findUnique: jest.fn() }, $transaction: jest.fn() };
+    const service = new ReadingsService(prisma, { drain: jest.fn() } as any);
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    await expect(
+      service.createReading(
+        { householdId: 'HH-1', productionKwh: 5, consumptionKwh: 1, timestamp: tomorrow },
+        'cid-future',
+      ),
+    ).rejects.toBeInstanceOf(BusinessRuleViolationException);
+
+    expect(prisma.meterReading.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

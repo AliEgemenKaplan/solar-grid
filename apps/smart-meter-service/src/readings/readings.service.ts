@@ -3,7 +3,14 @@ import { randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboxPublisherService } from '../messaging/outbox-publisher.service';
-import { CreateReadingDto } from './dto/create-reading.dto';
+import { CreateReadingDto, ReadingResponse, ReadingSummary } from './dto/create-reading.dto';
+import {
+  BusinessRuleViolationException,
+  Page,
+  PaginationQuery,
+  pageWindow,
+  toPage,
+} from '@solar-grid/nest-common';
 import {
   ENERGY_EVENT_VERSION,
   EnergyDemandDetectedEvent,
@@ -28,6 +35,12 @@ export interface EnergyCalculationResult {
   surplusKwh: string;
   demandKwh: string;
 }
+
+/**
+ * How far ahead of this server's clock a meter may be. Clocks drift; a reading
+ * an hour in the future is not drift.
+ */
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 interface OutboxRecord {
   eventId: string;
@@ -83,12 +96,21 @@ export class ReadingsService {
     };
   }
 
-  async createReading(dto: CreateReadingDto, correlationId: string) {
+  async createReading(dto: CreateReadingDto, correlationId: string): Promise<ReadingResponse> {
     const { status, netKwh, surplusKwh, demandKwh } = ReadingsService.calculateEnergyStatus(
       dto.productionKwh,
       dto.consumptionKwh,
     );
     const timestamp = new Date(dto.timestamp);
+
+    // A well-formed timestamp that has not happened yet is still impossible,
+    // and letting it in would pin the household's status to the future: the
+    // stale-reading guard would then refuse every genuine reading after it.
+    if (timestamp.getTime() > Date.now() + MAX_CLOCK_SKEW_MS) {
+      throw new BusinessRuleViolationException('A meter reading cannot be taken in the future.', [
+        `timestamp ${dto.timestamp} is ahead of the server clock`,
+      ]);
+    }
 
     // A meter reports one reading per household per timestamp, so a client
     // retry must not produce a second reading or a second event.
@@ -182,13 +204,21 @@ export class ReadingsService {
     }
   }
 
-  async getReadingsByHousehold(householdId: string) {
-    const readings = await this.prisma.meterReading.findMany({
-      where: { householdId },
-      orderBy: { timestamp: 'desc' },
-      take: 100,
-    });
-    return readings.map((reading) => toReadingSummary(reading));
+  /** Served by the (householdId, timestamp) unique index. */
+  async getReadingsByHousehold(
+    householdId: string,
+    query: PaginationQuery,
+  ): Promise<Page<ReadingSummary>> {
+    const where = { householdId };
+    const [readings, total] = await this.prisma.$transaction([
+      this.prisma.meterReading.findMany({
+        where,
+        orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+        ...pageWindow(query),
+      }),
+      this.prisma.meterReading.count({ where }),
+    ]);
+    return toPage(readings.map(toReadingSummary), total, query);
   }
 
   /**
@@ -278,7 +308,7 @@ export class ReadingsService {
 }
 
 /** Energy leaves this service as fixed-scale decimal strings. */
-function toReadingSummary(reading: MeterReading) {
+function toReadingSummary(reading: MeterReading): ReadingSummary {
   return {
     id: reading.id,
     householdId: reading.householdId,
@@ -296,7 +326,7 @@ function toReadingResponse(
   surplusKwh: string,
   demandKwh: string,
   duplicate: boolean,
-) {
+): ReadingResponse {
   return {
     ...toReadingSummary(reading),
     surplusKwh: formatEnergy(surplusKwh),
