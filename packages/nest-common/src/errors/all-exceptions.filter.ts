@@ -23,6 +23,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger('HttpException');
 
   catch(exception: unknown, host: ArgumentsHost): void {
+    // Global filters also catch what a RabbitMQ handler throws. That error has
+    // no HTTP response to become; it belongs to the consumer's retry and dead
+    // letter handling, so it goes back unchanged.
+    if (host.getType() !== 'http') throw exception;
+
     const http = host.switchToHttp();
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();

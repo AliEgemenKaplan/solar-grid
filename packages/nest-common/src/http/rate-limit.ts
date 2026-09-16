@@ -1,4 +1,4 @@
-import { DynamicModule, ExecutionContext, Module } from '@nestjs/common';
+import { DynamicModule, ExecutionContext, Injectable, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Throttle, ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -19,6 +19,21 @@ function readPositiveInt(raw: string | undefined, fallback: number): number {
 
 function windowMs(): number {
   return readPositiveInt(process.env.RATE_LIMIT_TTL_MS, DEFAULT_WINDOW_MS);
+}
+
+/**
+ * The throttler, limited to HTTP.
+ *
+ * A global guard is not only an HTTP guard: Nest also runs it in front of
+ * every RabbitMQ handler. There the "request" is an event and the "response"
+ * is the raw AMQP message, the throttler fails trying to set headers on it,
+ * and every event is rejected. Events are paced by the broker, not by this.
+ */
+@Injectable()
+export class HttpThrottlerGuard extends ThrottlerGuard {
+  protected override async shouldSkip(context: ExecutionContext): Promise<boolean> {
+    return context.getType() !== 'http';
+  }
 }
 
 /**
@@ -60,7 +75,7 @@ export class RateLimitModule {
           },
         }),
       ],
-      providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+      providers: [{ provide: APP_GUARD, useClass: HttpThrottlerGuard }],
     };
   }
 }

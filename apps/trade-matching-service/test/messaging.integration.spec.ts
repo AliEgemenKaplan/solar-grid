@@ -18,6 +18,7 @@ import {
   ROUTING_KEY_SURPLUS_DETECTED,
   retryQueueName,
 } from '@solar-grid/shared-contracts';
+import { configureHttpApp, RateLimitModule } from '@solar-grid/nest-common';
 import { PrismaClient } from '../generated/client';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { MatchingService } from '../src/matching/matching.service';
@@ -90,6 +91,10 @@ describe('messaging reliability', () => {
   /**
    * Boots the real consumer against the real topology, with whichever
    * persistence and matching behaviour the test needs.
+   *
+   * The app gets the same global guard, filter and pipes main.ts installs.
+   * Nest applies global enhancers to RabbitMQ handlers too, so a consumer
+   * tested without them can pass while the deployed one rejects every event.
    */
   async function startConsumer(overrides: {
     prisma: unknown;
@@ -99,6 +104,7 @@ describe('messaging reliability', () => {
     const config = fakeConfig(overrides.uri ?? amqpUri);
     const moduleRef = await Test.createTestingModule({
       imports: [
+        RateLimitModule.forRoot(),
         RabbitMQModule.forRoot({
           ...buildRabbitMqConfig(config),
           connectionInitOptions: { wait: true, timeout: 30_000 },
@@ -113,6 +119,12 @@ describe('messaging reliability', () => {
     }).compile();
 
     const app = moduleRef.createNestApplication();
+    configureHttpApp(app, {
+      title: 'trade-matching-service',
+      description: 'messaging test',
+      tags: [],
+      credentials: [],
+    });
     await app.init();
     return app;
   }

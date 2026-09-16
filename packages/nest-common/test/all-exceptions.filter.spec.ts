@@ -16,6 +16,7 @@ function run(exception: unknown) {
   const json = jest.fn();
   const status = jest.fn().mockReturnValue({ json });
   const host = {
+    getType: () => 'http',
     switchToHttp: () => ({
       getRequest: () => ({
         method: 'POST',
@@ -98,5 +99,14 @@ describe('AllExceptionsFilter', () => {
     expect(body).not.toHaveProperty('stack');
     // Still traceable.
     expect(body.correlationId).toBe('cid-under-test');
+  });
+
+  it('gives an error thrown by a RabbitMQ handler back unchanged', () => {
+    const failure = new Error('database unavailable');
+    const switchToHttp = jest.fn();
+    const host = { getType: () => 'rmq', switchToHttp } as unknown as ArgumentsHost;
+
+    expect(() => new AllExceptionsFilter().catch(failure, host)).toThrow(failure);
+    expect(switchToHttp).not.toHaveBeenCalled();
   });
 });

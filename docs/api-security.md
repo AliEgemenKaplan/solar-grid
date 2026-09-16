@@ -251,6 +251,12 @@ types every decimal field as a string.
 Requests carrying the internal service token are exempt: public traffic must
 not be able to stop trade-matching from settling trades with billing.
 
+Only HTTP is limited. Nest runs global guards and filters in front of RabbitMQ
+handlers too, so the rate limit guard skips anything that is not an HTTP
+request, and the error filter hands a consumer's exception back unchanged to
+the retry and dead letter handling in [reliability.md](reliability.md). The
+messaging integration tests boot the consumer with this wiring for that reason.
+
 The counters live in each process. That is right for one instance per service,
 which is how this stack runs; several instances would need a shared store.
 
