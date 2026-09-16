@@ -29,6 +29,8 @@ model SellOffer {
   // Matching scans open offers oldest first.
   @@index([status, createdAt])
   @@index([householdId])
+  // Tracing one reading through to the offer or request it created.
+  @@index([correlationId])
   @@map("sell_offers")
 }
 
@@ -48,6 +50,8 @@ model BuyRequest {
   // Matching scans open requests oldest first.
   @@index([status, createdAt])
   @@index([householdId])
+  // Tracing one reading through to the offer or request it created.
+  @@index([correlationId])
   @@map("buy_requests")
 }
 

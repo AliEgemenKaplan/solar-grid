@@ -87,7 +87,11 @@ export class EnergyEventsConsumer {
           ? await this.handleSurplus(event)
           : await this.handleDemand(event);
 
-      if (created) {
+      // On a retry the offer is usually already there from the first attempt,
+      // so the insert reports a duplicate - but whatever failed afterwards,
+      // such as pricing being down, still needs doing. A first delivery of a
+      // genuine duplicate has nothing new to match and skips it.
+      if (created || attempt > 1) {
         await this.matchingService.runMatching(event.correlationId);
       }
     } catch (err) {

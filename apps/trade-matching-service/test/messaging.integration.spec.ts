@@ -291,9 +291,10 @@ describe('messaging reliability', () => {
       await wait(RETRY_DELAY_MS * 4);
 
       expect(await prisma.sellOffer.count()).toBe(1);
-      // The retry found the offer already there and stopped, so it never asked
-      // for another matching run.
-      expect(runMatching).toHaveBeenCalledTimes(1);
+      // The retry found the offer already there and did not write it again,
+      // but it did run matching again: that is the step that failed, and a
+      // retry that skipped it would leave the offer unmatched.
+      expect(runMatching).toHaveBeenCalledTimes(2);
       expect((await amqp.channel.checkQueue(QUEUE_TRADE_MATCHING_DLQ)).messageCount).toBe(0);
     });
   });

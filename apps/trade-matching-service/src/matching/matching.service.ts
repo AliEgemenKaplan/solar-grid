@@ -40,6 +40,19 @@ const SETTLEMENT_BATCH_SIZE = 50;
 
 class ReservationConflict extends Error {}
 
+/**
+ * Pricing did not answer, so nothing could be matched. Nothing was reserved
+ * either - the price is fetched before any energy is touched - so the caller
+ * is free to try again. The HTTP layer turns this into a 503, and the event
+ * consumer into a delayed retry.
+ */
+export class PricingUnavailableError extends Error {
+  constructor(reason: string) {
+    super(`pricing-engine-service is unavailable: ${reason}`);
+    this.name = 'PricingUnavailableError';
+  }
+}
+
 @Injectable()
 export class MatchingService {
   private readonly logger = new Logger(MatchingService.name);
@@ -102,7 +115,7 @@ export class MatchingService {
       this.logger.error(
         `Failed to fetch price, aborting matching: ${describe(err)} [cid=${correlationId}]`,
       );
-      return result;
+      throw new PricingUnavailableError(describe(err));
     }
 
     for (const planned of plan.trades) {
@@ -332,16 +345,6 @@ export class MatchingService {
     if (request.status !== status) {
       await tx.buyRequest.update({ where: { id: requestId }, data: { status } });
     }
-  }
-
-  async getMatches() {
-    const matches = await this.prisma.tradeMatch.findMany({ orderBy: { createdAt: 'desc' } });
-    return matches.map(toTradeResponse);
-  }
-
-  async getMatchByTradeId(tradeId: string) {
-    const match = await this.prisma.tradeMatch.findUnique({ where: { tradeId } });
-    return match ? toTradeResponse(match) : null;
   }
 }
 

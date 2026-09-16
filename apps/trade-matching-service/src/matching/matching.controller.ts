@@ -1,35 +1,75 @@
-import { Controller, Get, Post, Param, Headers, Logger } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
-import { MatchingService } from './matching.service';
-import { getOrGenerateCorrelationId } from '@solar-grid/shared-utils';
-import { HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
+import { Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiServiceUnavailableResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import {
+  ApiErrorResponse,
+  ApiPageResponse,
+  CorrelationId,
+  DownstreamUnavailableException,
+  RequiresOperator,
+  TradeIdParam,
+  WriteRateLimit,
+} from '@solar-grid/nest-common';
+import { MatchingService, PricingUnavailableError } from './matching.service';
+import { MarketQueriesService } from './market-queries.service';
+import { MatchListQuery, MatchRunResponse, TradeMatchResponse } from './dto/market.dto';
 
 @ApiTags('Matching')
-@ApiHeader({ name: HEADER_CORRELATION_ID, required: false })
 @Controller()
 export class MatchingController {
-  private readonly logger = new Logger(MatchingController.name);
-
-  constructor(private readonly matchingService: MatchingService) {}
+  constructor(
+    private readonly matchingService: MatchingService,
+    private readonly queries: MarketQueriesService,
+  ) {}
 
   @Post('matching/run')
-  @ApiOperation({ summary: 'Manually trigger the FIFO matching algorithm' })
-  @ApiResponse({ status: 201, description: 'Matching result with counts' })
-  async runMatching(@Headers(HEADER_CORRELATION_ID) correlationId: string) {
-    const cid = getOrGenerateCorrelationId({ [HEADER_CORRELATION_ID]: correlationId });
-    this.logger.log(`POST /matching/run [cid=${cid}]`);
-    return this.matchingService.runMatching(cid);
+  @RequiresOperator()
+  @WriteRateLimit()
+  // A command, not a resource: nothing is created at a new URL.
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Run matching now',
+    description:
+      'Settles trades left unconfirmed by earlier runs, then matches open offers with open requests. Safe to call while events are being consumed.',
+  })
+  @ApiOkResponse({ type: MatchRunResponse })
+  @ApiServiceUnavailableResponse({
+    type: ApiErrorResponse,
+    description: 'Pricing did not answer. Nothing was reserved, so the run can simply be retried.',
+  })
+  async runMatching(@CorrelationId() correlationId: string): Promise<MatchRunResponse> {
+    try {
+      return await this.matchingService.runMatching(correlationId);
+    } catch (err) {
+      if (err instanceof PricingUnavailableError) {
+        throw new DownstreamUnavailableException(
+          'Matching could not run because the pricing service did not answer.',
+        );
+      }
+      throw err;
+    }
   }
 
   @Get('matches')
-  @ApiOperation({ summary: 'Get all trade matches' })
-  async getMatches() {
-    return this.matchingService.getMatches();
+  @ApiOperation({ summary: 'List trade matches, newest first' })
+  @ApiPageResponse(TradeMatchResponse)
+  @ApiBadRequestResponse({ type: ApiErrorResponse })
+  list(@Query() query: MatchListQuery) {
+    return this.queries.listMatches(query);
   }
 
   @Get('matches/:tradeId')
-  @ApiOperation({ summary: 'Get a specific trade match by trade ID' })
-  async getMatch(@Param('tradeId') tradeId: string) {
-    return this.matchingService.getMatchByTradeId(tradeId);
+  @ApiOperation({ summary: 'Get one trade match' })
+  @ApiOkResponse({ type: TradeMatchResponse })
+  @ApiNotFoundResponse({ type: ApiErrorResponse })
+  @ApiBadRequestResponse({ type: ApiErrorResponse })
+  get(@Param() { tradeId }: TradeIdParam): Promise<TradeMatchResponse> {
+    return this.queries.getMatch(tradeId);
   }
 }

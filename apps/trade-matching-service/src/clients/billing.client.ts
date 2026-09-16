@@ -34,12 +34,19 @@ export class BillingRejectedError extends Error {
 export class BillingClient {
   private readonly logger = new Logger(BillingClient.name);
   private readonly baseUrl: string;
+  private readonly internalToken: string | undefined;
 
   constructor(
     private readonly httpService: HttpService,
     private readonly config: ConfigService,
   ) {
     this.baseUrl = config.get<string>('BILLING_LEDGER_URL', 'http://localhost:3004');
+    // Recording a trade moves money, so billing only accepts it from another
+    // Solar Grid service. The token is sent, never logged.
+    this.internalToken = config.get<string>('INTERNAL_API_TOKEN');
+    if (!this.internalToken) {
+      this.logger.warn('INTERNAL_API_TOKEN is not set: billing will refuse every trade.');
+    }
   }
 
   async createTrade(dto: CompletedTradeDto): Promise<CreateTradeResponse> {
@@ -51,7 +58,10 @@ export class BillingClient {
     try {
       const response = await firstValueFrom(
         this.httpService.post<CreateTradeResponse>(url, dto, {
-          headers: { [HEADER_CORRELATION_ID]: dto.correlationId },
+          headers: {
+            [HEADER_CORRELATION_ID]: dto.correlationId,
+            ...(this.internalToken ? { Authorization: `Bearer ${this.internalToken}` } : {}),
+          },
         }),
       );
       return response.data;
