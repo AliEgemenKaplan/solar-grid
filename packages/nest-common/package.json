@@ -1,0 +1,59 @@
+{
+  "name": "@solar-grid/nest-common",
+  "version": "1.0.0",
+  "description": "Cross-cutting HTTP plumbing shared by the Solar Grid services: authentication, validation, error contract, pagination and bootstrap",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@solar-grid/shared-contracts": "workspace:*",
+    "@solar-grid/shared-utils": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/swagger": "^11.0.0",
+    "@nestjs/throttler": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.0",
+    "helmet": "^8.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.2.3",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.2.3",
+    "@nestjs/swagger": "^11.4.7",
+    "@nestjs/throttler": "^6.4.0",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^24.13.4",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "helmet": "^8.1.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.11",
+    "typescript": "^5.9.3"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": ".",
+    "testRegex": ".*.spec.ts$",
+    "transform": {
+      "^.+.(t|j)s$": "ts-jest"
+    },
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@solar-grid/shared-contracts(.*)$": "<rootDir>/../shared-contracts/src$1",
+      "^@solar-grid/shared-utils(.*)$": "<rootDir>/../shared-utils/src$1"
+    }
+  }
+}

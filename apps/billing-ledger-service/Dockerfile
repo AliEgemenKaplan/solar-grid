@@ -13,6 +13,7 @@ WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared-contracts/package.json ./packages/shared-contracts/
 COPY packages/shared-utils/package.json ./packages/shared-utils/
+COPY packages/nest-common/package.json ./packages/nest-common/
 COPY apps/smart-meter-service/package.json ./apps/smart-meter-service/
 COPY apps/pricing-engine-service/package.json ./apps/pricing-engine-service/
 COPY apps/trade-matching-service/package.json ./apps/trade-matching-service/
@@ -22,10 +23,12 @@ RUN pnpm install --frozen-lockfile
 
 COPY packages/shared-contracts ./packages/shared-contracts/
 COPY packages/shared-utils ./packages/shared-utils/
+COPY packages/nest-common ./packages/nest-common/
 COPY apps/billing-ledger-service ./apps/billing-ledger-service/
 
 RUN pnpm --filter @solar-grid/shared-contracts build
 RUN pnpm --filter @solar-grid/shared-utils build
+RUN pnpm --filter @solar-grid/nest-common build
 
 RUN cd apps/billing-ledger-service && npx prisma generate && pnpm build
 
