@@ -9,6 +9,7 @@ import {
 import { PrismaModule } from './prisma/prisma.module';
 import { PrismaService } from './prisma/prisma.service';
 import { PricesModule } from './prices/prices.module';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { PricesModule } from './prices/prices.module';
     MetricsModule.forRoot({ service: 'pricing-engine-service' }),
     PrismaModule,
     PricesModule,
+    StatsModule,
     HealthModule.forRoot({
       service: 'pricing-engine-service',
       inject: [PrismaService],
