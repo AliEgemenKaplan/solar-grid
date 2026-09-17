@@ -10,12 +10,16 @@ Schemas are built from committed SQL migrations under
 container starts. Nothing generates DDL from the schema file at runtime, so the
 database a reviewer gets from a clean clone is the database that was tested.
 
-Each service has two migrations:
+Every service starts from the same two migrations, and three have picked up
+one or two more as query patterns arrived:
 
-| Migration                              | What it does                                                              |
-| -------------------------------------- | ------------------------------------------------------------------------- |
-| `20260913090000_init`                  | Tables, enums, indexes and foreign keys, generated from the Prisma schema |
-| `20260913090100_integrity_constraints` | CHECK constraints, which Prisma cannot express in its schema language     |
+| Migration                                 | Services                             | What it does                                                              |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------- |
+| `20260913090000_init`                     | all                                  | Tables, enums, indexes and foreign keys, generated from the Prisma schema |
+| `20260913090100_integrity_constraints`    | all                                  | CHECK constraints, which Prisma cannot express in its schema language     |
+| `20260916090000_correlation_indexes`      | trade-matching                       | Tracing a reading to the offer or request it produced                     |
+| `20260916090000_idempotency_request_hash` | billing                              | The hash that tells a retry from a different payload with the same key    |
+| `20260918090000_*_stats_indexes`          | smart-meter, trade-matching, billing | Indexes the statistics endpoints need; see [analytics.md](analytics.md)   |
 
 Deploying a second time is a no-op: Prisma records applied migrations in
 `_prisma_migrations` and skips them.
@@ -55,6 +59,10 @@ them as fixed-scale strings for the same reason - see
 `(householdId, timestamp)` is unique: a meter reports one reading per
 timestamp, so a retried request cannot create a second reading or event. The
 same index serves "readings for this household, newest first".
+
+`timestamp` is indexed on its own as well, for the statistics endpoints: they
+read a window across every household, and an index that starts with the
+household cannot serve that.
 
 ### `household_energy_status`
 
@@ -170,7 +178,9 @@ constraints and indexes.
 
 The foreign keys mean a trade cannot reserve energy from an offer or request
 that is not there, and `(status, createdAt)` is how settlement finds
-unconfirmed trades oldest first.
+unconfirmed trades oldest first. `createdAt`, `sellerHouseholdId` and
+`buyerHouseholdId` are indexed for the statistics endpoints, which read a
+window across every status and a household's trading from either side of it.
 
 ---
 
@@ -190,7 +200,7 @@ unconfirmed trades oldest first.
 | currency          | String        | Three letter code                     |
 | idempotencyKey    | String        | UNIQUE                                |
 | correlationId     | String        | Indexed, for tracing                  |
-| completedAt       | DateTime      |                                       |
+| completedAt       | DateTime      | Indexed, for statistics by trade time |
 | createdAt         | DateTime      |                                       |
 
 ### `ledger_entries` _(append only - never updated or deleted)_
@@ -209,7 +219,10 @@ unconfirmed trades oldest first.
 `(tradeId, householdId, entryType)` is unique. One side of a trade is credited
 or debited exactly once, so even an application bug that tried to settle the
 same trade twice cannot produce a second set of entries. The ledger endpoint
-reads one household newest first, which `(householdId, createdAt)` serves.
+reads one household newest first, which `(householdId, createdAt)` serves;
+`createdAt` on its own serves the statistics, which read every household at
+once. Nothing here is ever updated or deleted, statistics included: they are
+SELECTs run by a role with no such privilege.
 
 ### `household_balances`
 

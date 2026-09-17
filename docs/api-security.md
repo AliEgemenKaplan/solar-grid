@@ -33,13 +33,21 @@ each endpoint is deliberately assigned to one of them.
 | billing        | `POST /trades`                                                              | **internal service**           | Moves money; only trade-matching may record a trade                                                                  |
 | billing        | `GET /trades`, `GET /trades/:tradeId`, `GET /trades/household/:householdId` | public                         |                                                                                                                      |
 | billing        | `GET /balances/:householdId`, `GET /ledger/:householdId`                    | public                         |                                                                                                                      |
+| all            | `GET /stats/summary`, `/stats/trends`, `/stats/households`                  | **operator**                   | Aggregates describe the whole neighbourhood's energy and money; see [analytics.md](analytics.md)                     |
 | all            | `GET /health`, `/health/live`, `/health/ready`                              | public, not rate limited       |                                                                                                                      |
 | all            | `GET /metrics`                                                              | **metrics**, not rate limited  | Operational counts; see [observability.md](observability.md#metrics)                                                 |
 
 That is every mutation in the system: one public and rate limited, two for
-operators, one for services. `/metrics` is the one read that is not public: it
-describes the service's inside rather than the market. Reads are public because the dashboard planned for
-phase 7 runs in a browser, and a browser can never be given either token.
+operators, one for services.
+
+Reads of a single record - one household's readings, one trade, one balance -
+are public, because a dashboard runs in a browser and a browser can never be
+given a token. Two kinds of read are not: `/metrics`, which describes the
+service's inside rather than the market, and `/stats/*`, which describes every
+household at once. An aggregate over the neighbourhood is commercial
+information about people who did not ask to be aggregated, so it asks for the
+operator token and a dashboard that wants it fetches it from its own server
+side.
 
 ### Authentication and authorization
 

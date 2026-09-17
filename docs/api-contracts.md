@@ -16,6 +16,8 @@ limits are the same everywhere and are described once, in
   `path` and sometimes `details`.
 - **`x-correlation-id`** may be sent with any request and is always returned.
 - **Swagger** is at `http://localhost:<port>/api` when enabled.
+- **Statistics** live under `/stats` on every service, need the operator token,
+  and are documented in full in [analytics.md](analytics.md).
 
 Access: 🌐 public · 🔑 operator token · 🔒 internal service token · 📈 metrics token
 
@@ -79,6 +81,13 @@ Paged household statuses, most recently active first. Filter: `status`
 
 `404` when the household has never reported.
 
+### 🔑 GET /stats/summary · 🔑 GET /stats/households · 🔑 GET /stats/trends
+
+Energy recorded in a window: totals, one row per household, and an hour, day or
+week series. Query: `from`, `to` (UTC, `from` inclusive and `to` exclusive),
+`householdId`, `bucket`, plus the usual `page` and `limit`.
+See [analytics.md](analytics.md#smart-meter---energy).
+
 ---
 
 ## pricing-engine-service (port 3002)
@@ -108,6 +117,12 @@ without the operator token.
 
 Paged snapshots, newest first:
 `{ id, totalSupplyKwh, totalDemandKwh, calculatedPrice, currency, createdAt }`.
+
+### 🔑 GET /stats/summary · 🔑 GET /stats/trends
+
+Average, lowest and highest price in a window, the supply and demand behind
+them, the newest snapshot and the band in force.
+See [analytics.md](analytics.md#pricing---prices).
 
 ---
 
@@ -169,6 +184,12 @@ Paged sell offers and buy requests, newest first. Filters: `status` (`OPEN`,
 `PARTIALLY_MATCHED`, `MATCHED`, `CANCELLED`), `correlationId`. Offers carry
 `availableKwh` and `originalKwh`; requests carry `requestedKwh` and
 `originalKwh`.
+
+### 🔑 GET /stats/summary · 🔑 GET /stats/households · 🔑 GET /stats/trends
+
+Trades by outcome, the energy and money they moved, matched and unmatched
+energy, trading per household, and the same over time.
+See [analytics.md](analytics.md#trade-matching---the-market).
 
 ---
 
@@ -243,6 +264,13 @@ Paged, append-only entries, newest first. Filter: `correlationId`.
   "createdAt": "..."
 }
 ```
+
+### 🔑 GET /stats/summary · 🔑 GET /stats/households · 🔑 GET /stats/trends
+
+What was settled, what the ledger holds - including credits minus debits,
+`"0.00"` in a healthy ledger - where the balances stand, and the same per
+household and over time.
+See [analytics.md](analytics.md#billing---money).
 
 ---
 

@@ -82,12 +82,14 @@ message can be inspected and republished once the cause is fixed.
 
 ## Security
 
-- Reads and meter readings are public. Everything that changes how the market
-  behaves needs a token:
+- Reads of a single record and meter readings are public. Everything that
+  changes how the market behaves, and every aggregate over the whole
+  neighbourhood, needs a token:
 
   | Endpoint                                         | Token                                        |
   | ------------------------------------------------ | -------------------------------------------- |
   | `POST /matching/run`, `POST /prices/recalculate` | `OPERATOR_API_TOKEN`                         |
+  | `GET /stats/*` on every service                  | `OPERATOR_API_TOKEN`                         |
   | `POST /trades`                                   | `INTERNAL_API_TOKEN`, sent by trade-matching |
 
 - No token is `401`, the other role's token is `403`. Tokens come from the
@@ -153,6 +155,31 @@ curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"               
 [docs/observability.md](docs/observability.md) describes the logs and metrics;
 [docs/troubleshooting.md](docs/troubleshooting.md) goes from a symptom to its
 cause and the way back.
+
+## Statistics
+
+Every service answers `GET /stats/...` for the data it owns, read-only and with
+the operator token:
+
+```bash
+OPERATOR=$(sed -n 's/^OPERATOR_API_TOKEN=//p' infrastructure/.env)
+curl -s -H "Authorization: Bearer $OPERATOR" localhost:3001/stats/summary   # energy recorded
+curl -s -H "Authorization: Bearer $OPERATOR" localhost:3003/stats/summary   # what traded, at what price
+curl -s -H "Authorization: Bearer $OPERATOR" localhost:3004/stats/summary   # what settled, what the ledger holds
+curl -s -H "Authorization: Bearer $OPERATOR" "localhost:3003/stats/trends?bucket=day"  # a series for a chart
+```
+
+- Windows are UTC and half open: `from` is included, `to` is not.
+- Trends come back as a complete series - a quiet bucket reports zeros rather
+  than being left out - in hour, day or week buckets.
+- Sums, averages and per-household figures are computed by PostgreSQL over the
+  exact decimal columns and returned as decimal strings. An average over no
+  rows is `null`, not zero.
+- Nothing is copied into a reporting database: each service aggregates its own
+  tables, and a dashboard asks all four.
+
+[docs/analytics.md](docs/analytics.md) documents every endpoint, filter and
+limit.
 
 ## Prerequisites
 
@@ -296,6 +323,7 @@ SolarGrid/
 | [docs/api-security.md](docs/api-security.md)       | Authentication, validation, error contract, status codes, pagination, rate limits |
 | [docs/operations.md](docs/operations.md)           | Credentials, database privileges, images, health checks, shutdown, limits         |
 | [docs/observability.md](docs/observability.md)     | Structured logs, correlation ids, metrics                                         |
+| [docs/analytics.md](docs/analytics.md)             | Statistics endpoints, windows, buckets and decimal handling                       |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | From a symptom to its cause and recovery                                          |
 | [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
 | [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |
