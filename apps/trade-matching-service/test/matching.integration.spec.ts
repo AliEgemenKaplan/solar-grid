@@ -1,7 +1,4 @@
-import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
-import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { CompletedTradeDto } from '@solar-grid/shared-contracts';
 import Decimal from 'decimal.js';
 import { PrismaClient } from '../generated/client';
@@ -13,6 +10,7 @@ import {
 } from '../src/clients/billing.client';
 import { PricingClient } from '../src/clients/pricing.client';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { RuntimeDatabase, startRuntimeDatabase } from './support/runtime-database';
 
 jest.setTimeout(240_000);
 
@@ -66,28 +64,27 @@ const kwh = (value: { toFixed(dp: number): string }) => value.toFixed(3);
 const money = (value: { toFixed(dp: number): string }) => value.toFixed(2);
 
 describe('MatchingService against a real database', () => {
-  let container: StartedPostgreSqlContainer;
+  let database: RuntimeDatabase;
+  /** The owner: seeds, cleans up and inspects. */
   let prisma: PrismaClient;
+  /** What the service under test uses, with only its runtime grants. */
+  let runtime: PrismaClient;
   let billing: FakeBilling;
   let service: MatchingService;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:15-alpine').start();
-    const url = container.getConnectionUri();
-
-    execSync('pnpm exec prisma migrate deploy', {
-      cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, DATABASE_URL: url },
-      stdio: 'ignore',
-    });
-
-    prisma = new PrismaClient({ datasourceUrl: url });
-    await prisma.$connect();
+    // Every scenario below runs the service as the runtime role, so none of
+    // the reserve, bill, confirm steps can depend on owner-only privileges.
+    database = await startRuntimeDatabase();
+    prisma = new PrismaClient({ datasourceUrl: database.ownerUrl });
+    runtime = new PrismaClient({ datasourceUrl: database.runtimeUrl });
+    await Promise.all([prisma.$connect(), runtime.$connect()]);
   });
 
   afterAll(async () => {
     await prisma?.$disconnect();
-    await container?.stop();
+    await runtime?.$disconnect();
+    await database?.container.stop();
   });
 
   beforeEach(async () => {
@@ -97,7 +94,7 @@ describe('MatchingService against a real database', () => {
 
     billing = new FakeBilling();
     service = new MatchingService(
-      prisma as unknown as PrismaService,
+      runtime as unknown as PrismaService,
       fakePricing as unknown as PricingClient,
       billing as unknown as BillingClient,
     );

@@ -188,6 +188,9 @@ importers:
       '@nestjs/testing':
         specifier: ^11.2.3
         version: 11.2.3(@nestjs/common@11.2.3(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3)(@nestjs/platform-express@11.2.3)
+      '@testcontainers/postgresql':
+        specifier: ^12.1.0
+        version: 12.1.0
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -203,6 +206,9 @@ importers:
       prisma:
         specifier: ^5.10.0
         version: 5.22.0
+      testcontainers:
+        specifier: ^12.1.0
+        version: 12.1.0
       ts-jest:
         specifier: ^29.1.2
         version: 29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0(@types/node@24.13.4)(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3)))(typescript@5.9.3)

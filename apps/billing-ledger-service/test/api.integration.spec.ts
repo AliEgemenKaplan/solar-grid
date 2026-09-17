@@ -1,12 +1,10 @@
-import { execSync } from 'node:child_process';
-import path from 'node:path';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { configureHttpApp } from '@solar-grid/nest-common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { RuntimeDatabase, startRuntimeDatabase } from './support/runtime-database';
 
 jest.setTimeout(300_000);
 
@@ -63,24 +61,21 @@ function trade(overrides: Record<string, unknown> = {}) {
 }
 
 describe('billing HTTP API', () => {
-  let postgres: StartedPostgreSqlContainer;
+  let database: RuntimeDatabase;
   let app: INestApplication;
   let databaseUrl: string;
 
   beforeAll(async () => {
-    postgres = await new PostgreSqlContainer('postgres:15-alpine').start();
-    databaseUrl = postgres.getConnectionUri();
-    execSync('pnpm exec prisma migrate deploy', {
-      cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: 'ignore',
-    });
+    // As in production: the service connects as the runtime role, not as the
+    // owner that ran the migrations.
+    database = await startRuntimeDatabase();
+    databaseUrl = database.runtimeUrl;
     app = await startApp(databaseUrl);
   });
 
   afterAll(async () => {
     await app?.close();
-    await postgres?.stop();
+    await database?.container.stop();
     process.env = ORIGINAL_ENV;
   });
 
