@@ -21,7 +21,7 @@ async function bootstrap() {
     title: 'Smart Meter Service',
     description: 'Receives household smart meter readings and publishes surplus and demand events.',
     tags: ['Readings', 'Households', 'Health'],
-    credentials: ['metrics'],
+    credentials: ['operator', 'metrics'],
   });
 
   // Nest's own shutdown hooks are not enabled: this handler runs the same

@@ -21,7 +21,7 @@ async function bootstrap() {
     title: 'Billing & Ledger Service',
     description: 'Records completed trades in an append-only ledger and keeps household balances.',
     tags: ['Trades', 'Balances', 'Ledger', 'Health'],
-    credentials: ['internal-service', 'metrics'],
+    credentials: ['operator', 'internal-service', 'metrics'],
   });
 
   // Nest's own shutdown hooks are not enabled: this handler runs the same

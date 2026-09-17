@@ -252,6 +252,7 @@ services:
       - '127.0.0.1:${SMART_METER_PORT:-3001}:3001'
     environment:
       <<: *http-platform
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:?Set OPERATOR_API_TOKEN in infrastructure/.env (pnpm env:init)}
       NODE_ENV: production
       PORT: 3001
       DATABASE_URL: postgresql://solargrid_app:${SMART_METER_DB_PASSWORD}@postgres-smart-meter:5432/smart_meter_db
@@ -294,6 +295,7 @@ services:
       - '127.0.0.1:${BILLING_PORT:-3004}:3004'
     environment:
       <<: *http-platform
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:?Set OPERATOR_API_TOKEN in infrastructure/.env (pnpm env:init)}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in infrastructure/.env (pnpm env:init)}
       NODE_ENV: production
       PORT: 3004

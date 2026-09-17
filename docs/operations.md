@@ -46,13 +46,14 @@ by git.
 | `POSTGRES_PASSWORD`                                                                            | PostgreSQL itself and the migration jobs: the database owner |
 | `SMART_METER_DB_PASSWORD`, `PRICING_DB_PASSWORD`, `MATCHING_DB_PASSWORD`, `LEDGER_DB_PASSWORD` | each service's runtime role, one per database                |
 | `RABBITMQ_USER`, `RABBITMQ_PASSWORD`                                                           | the broker, smart-meter, trade-matching                      |
-| `OPERATOR_API_TOKEN`                                                                           | pricing, trade-matching                                      |
+| `OPERATOR_API_TOKEN`                                                                           | every service, for the statistics endpoints                  |
 | `INTERNAL_API_TOKEN`                                                                           | trade-matching, billing                                      |
 | `METRICS_TOKEN`                                                                                | every service, to protect `/metrics`                         |
 
 Each container receives only the variables it uses. The billing container, for
-instance, has its runtime database URL and the internal token; it has no owner
-password, no broker password and no operator token.
+instance, has its runtime database URL, the internal token and - since its
+statistics endpoints ask for one - the operator token; it has no owner
+password and no broker password.
 
 ### Refusing unsafe configuration
 

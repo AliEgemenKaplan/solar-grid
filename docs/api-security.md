@@ -78,10 +78,14 @@ Each service only receives the tokens it needs:
 
 | Service        | `OPERATOR_API_TOKEN` | `INTERNAL_API_TOKEN` | `METRICS_TOKEN` |
 | -------------- | -------------------- | -------------------- | --------------- |
-| smart-meter    | -                    | -                    | checks          |
+| smart-meter    | checks               | -                    | checks          |
 | pricing        | checks               | -                    | checks          |
 | trade-matching | checks               | sends                | checks          |
-| billing        | -                    | checks               | checks          |
+| billing        | checks               | checks               | checks          |
+
+Every service checks the operator token now that every service answers
+`/stats/*`; before those endpoints, smart-meter and billing had nothing an
+operator could call and were given no operator token at all.
 
 The metrics token has its own principal so that a scraper - and every service
 that must recognise it - never holds a token that could trigger a matching run
@@ -308,7 +312,7 @@ curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"
 
 | Variable               | Default                      | Services                |
 | ---------------------- | ---------------------------- | ----------------------- |
-| `OPERATOR_API_TOKEN`   | none; required in production | pricing, trade-matching |
+| `OPERATOR_API_TOKEN`   | none; required in production | all                     |
 | `INTERNAL_API_TOKEN`   | none; required in production | trade-matching, billing |
 | `METRICS_TOKEN`        | none; required in production | all                     |
 | `SWAGGER_ENABLED`      | on outside production        | all                     |
