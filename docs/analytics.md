@@ -423,15 +423,21 @@ Indexes added for them: `meter_readings(timestamp)`,
 `ledger_entries(createdAt)`. Each one serves a window or filter the existing
 indexes could not, because those start with the household.
 
+With a demo's worth of rows the planner still chooses a sequential scan, which
+is the faster plan at that size; the indexes are there for when the tables are
+not a demo.
+
 ## Known limitations
 
 - **No single cross-service overview.** Each service answers for its own
   database; combining them is the caller's job. One service calling the other
   three would make an informational read depend on three more processes.
-- **Counted, not reconciled.** trade-matching and billing count the same trades
-  from their own tables. A trade reserved but not yet settled appears as
-  `pendingBilling` in one and nowhere in the other, which is correct but means
-  the two summaries agree only once everything has settled.
+- **Counted, not reconciled.** trade-matching and billing count trades from
+  their own tables, and the two totals are not meant to be equal. A trade
+  reserved but not yet settled is `pendingBilling` in one and absent from the
+  other; a trade recorded straight through `POST /trades` by an internal
+  caller - as the demo's idempotency check does - is in billing's totals and
+  was never matched at all. Each service answers for what it did.
 - **Household statistics are derived, not registered.** There is no household
   registry in this system; a household exists because it reported a reading or
   traded. A household that has done neither in the window is simply absent, and
