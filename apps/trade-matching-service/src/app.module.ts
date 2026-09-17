@@ -14,6 +14,7 @@ import { MatchingModule } from './matching/matching.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { OffersModule } from './offers/offers.module';
 import { RequestsModule } from './requests/requests.module';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { RequestsModule } from './requests/requests.module';
     MessagingModule,
     OffersModule,
     RequestsModule,
+    StatsModule,
     HealthModule.forRoot({
       service: 'trade-matching-service',
       imports: [MessagingModule],

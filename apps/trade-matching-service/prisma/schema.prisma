@@ -83,6 +83,11 @@ model TradeMatch {
 
   // Settlement picks up unconfirmed trades oldest first.
   @@index([status, createdAt])
+  // Statistics read a window across every status, and household trading from
+  // whichever side of the trade the household was on.
+  @@index([createdAt])
+  @@index([sellerHouseholdId])
+  @@index([buyerHouseholdId])
   @@index([offerId])
   @@index([requestId])
   // Tracing one reading through to its trades.
