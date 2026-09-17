@@ -143,6 +143,12 @@ calls write.
 
 ## Health endpoints
 
-Each service exposes `GET /health`, a liveness check that reports the service
-name and a timestamp. It does not yet check the database or the broker;
-`/health/live` and `/health/ready` come with the operations work.
+Each service exposes `GET /health/live`, which never touches a dependency, and
+`GET /health/ready`, which answers 503 while its database - or, for
+trade-matching, the broker - is down or while the service is shutting down.
+`GET /health` remains as an alias of liveness. The compose healthchecks use
+readiness.
+
+A service shutting down stops taking messages and waits for the ones in hand
+before it closes its connections, so a deploy does not turn in-flight events
+into redeliveries. See [operations.md](operations.md) for both.

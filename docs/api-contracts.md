@@ -248,8 +248,29 @@ Paged, append-only entries, newest first. Filter: `correlationId`.
 
 ## Every service
 
-### 🌐 GET /health
+### 🌐 GET /health/live · 🌐 GET /health
 
 ```json
 { "status": "ok", "service": "billing-ledger-service", "timestamp": "..." }
 ```
+
+The process is running. Never checks a dependency. `/health` is the original
+path and returns the same.
+
+### 🌐 GET /health/ready
+
+```json
+{
+  "status": "ready",
+  "service": "smart-meter-service",
+  "timestamp": "...",
+  "checks": {
+    "database": { "status": "up", "critical": true, "durationMs": 2 },
+    "rabbitmq": { "status": "up", "critical": false, "durationMs": 0 }
+  }
+}
+```
+
+`200` when every critical dependency answers; `503` with `status: "not_ready"`
+when one does not, or `status: "shutting_down"`. Not rate limited. See
+[operations.md](operations.md#health-checks).

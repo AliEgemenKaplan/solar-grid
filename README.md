@@ -61,7 +61,9 @@ Communication patterns:
   if billing refuses outright, so the same kilowatt hours cannot be sold or
   charged twice.
 - Consumer prefetch is `1`: matching is serialised by a database lock anyway.
-- Health endpoints are lightweight liveness checks at `/health`.
+- `/health/live` never touches a dependency; `/health/ready` checks the database
+  and, where it matters, the broker. A shutting-down service finishes the
+  messages in hand before it closes.
 
 [docs/event-flow.md](docs/event-flow.md) walks through how an event is created,
 how it crosses RabbitMQ, what happens when it fails and how it reaches the dead
@@ -74,7 +76,8 @@ and the test that proves each one.
 docker exec solar-grid-rabbitmq rabbitmqctl list_queues name messages consumers
 ```
 
-The management UI is at http://localhost:15672 (guest / guest), where a parked
+The management UI is at http://localhost:15672 (`RABBITMQ_USER` /
+`RABBITMQ_PASSWORD` from `infrastructure/.env`), where a parked
 message can be inspected and republished once the cause is fixed.
 
 ## Security
@@ -102,18 +105,33 @@ message can be inspected and republished once the cause is fixed.
 
 ### Calling the API locally
 
-The Docker stack falls back to development tokens (they contain
-`not-for-production`, and the services warn about them at startup):
+The tokens are the ones `pnpm env:init` generated in `infrastructure/.env`:
 
 ```bash
-curl -i -X POST http://localhost:3003/matching/run                  # 401
-curl -s -X POST http://localhost:3003/matching/run \
-  -H "Authorization: Bearer dev-operator-token-not-for-production"   # 200
-curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"    # public, paged
+OPERATOR=$(sed -n 's/^OPERATOR_API_TOKEN=//p' infrastructure/.env)
+curl -i -X POST http://localhost:3003/matching/run                                       # 401
+curl -s -X POST http://localhost:3003/matching/run -H "Authorization: Bearer $OPERATOR"  # 200
+curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"                         # public, paged
 ```
 
-Set real values in `infrastructure/.env` for anything that is not your own
-machine: `openssl rand -hex 32`.
+## Operations
+
+- **No credential has a default.** `pnpm env:init` writes random secrets to
+  `infrastructure/.env`; compose will not start without them, and a service in
+  production refuses short, default or placeholder credentials.
+- **Least-privileged database access.** Migrations run in a one-shot job as the
+  database owner. The services connect as `solargrid_app`, which owns nothing
+  and holds only per-table grants - billing's ledger cannot be updated or
+  deleted even by billing.
+- **Small, hardened images.** Multi-stage builds, production dependencies only,
+  no package managers or Prisma CLI, a non-root user, a read-only filesystem,
+  no Linux capabilities, memory and CPU limits.
+- **`/health/live` and `/health/ready`.** Readiness checks the database and,
+  where it matters, the broker; compose waits on it.
+- **Graceful shutdown.** On SIGTERM a service stops consuming, finishes the
+  work in hand, then closes HTTP, the broker and the database, in that order.
+
+[docs/operations.md](docs/operations.md) covers all of it.
 
 ## Prerequisites
 
@@ -132,7 +150,8 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-docker compose -f infrastructure/docker-compose.yml up -d --build
+pnpm env:init          # once: generates infrastructure/.env
+docker compose -f infrastructure/docker-compose.yml up -d --build --wait
 bash scripts/demo.sh
 ```
 
@@ -151,9 +170,9 @@ a shell, or start the stack with `infrastructure/docker-compose.dev-ports.yml`
 as a second `-f` argument when you want to reach a database from your machine.
 
 ```bash
-cp infrastructure/.env.example infrastructure/.env
-# edit the ports that collide, then
-docker compose -f infrastructure/docker-compose.yml up -d --build
+pnpm env:init   # if infrastructure/.env does not exist yet
+# edit the ports that collide in infrastructure/.env, then
+docker compose -f infrastructure/docker-compose.yml up -d --build --wait
 ```
 
 The demo scripts follow the same values:
@@ -174,11 +193,14 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 
 ## Docker Compose
 
-Start:
+Start (after `pnpm env:init`):
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml up -d --build
+docker compose -f infrastructure/docker-compose.yml up -d --build --wait
 ```
+
+`docker compose ps -a` then shows nine healthy containers and four migration
+jobs that exited with status 0.
 
 Logs:
 
@@ -214,8 +236,7 @@ Swagger UI:
 RabbitMQ Management:
 
 - http://localhost:15672
-- username: `guest`
-- password: `guest`
+- `RABBITMQ_USER` and `RABBITMQ_PASSWORD` from `infrastructure/.env`
 
 ## Repository Structure
 
@@ -233,6 +254,7 @@ SolarGrid/
   infrastructure/
     docker-compose.yml
     .env.example
+    postgres/create-app-role.sh   # the least-privileged runtime role
   docs/
   scripts/
     demo.sh
@@ -251,6 +273,7 @@ SolarGrid/
 | [docs/event-flow.md](docs/event-flow.md)           | RabbitMQ topology, routing keys, and flow                                         |
 | [docs/database-design.md](docs/database-design.md) | Database tables per service                                                       |
 | [docs/api-security.md](docs/api-security.md)       | Authentication, validation, error contract, status codes, pagination, rate limits |
+| [docs/operations.md](docs/operations.md)           | Credentials, database privileges, images, health checks, shutdown, limits         |
 | [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
 | [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |
 

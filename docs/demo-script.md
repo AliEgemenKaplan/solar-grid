@@ -1,9 +1,10 @@
 # Solar Grid - Demo Script
 
-Run all services first:
+Create the credentials once, then start everything:
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml up -d --build
+pnpm env:init
+docker compose -f infrastructure/docker-compose.yml up -d --build --wait
 ```
 
 Then run:
@@ -20,12 +21,13 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 
 ## Port Override Mode
 
-If a default port collides with another stack, copy the example env file and
-change the value; there is no separate override compose file.
+If a default port collides with another stack, change it in
+`infrastructure/.env`; there is no separate override compose file.
 
 ```bash
-cp infrastructure/.env.example infrastructure/.env
-docker compose -f infrastructure/docker-compose.yml up -d --build
+pnpm env:init   # if infrastructure/.env does not exist yet
+# edit the ports that collide, then
+docker compose -f infrastructure/docker-compose.yml up -d --build --wait
 ```
 
 Then point the demo scripts at the ports you chose:
@@ -50,7 +52,7 @@ Each demo run generates unique household IDs, so it can be repeated without manu
 
 The script verifies:
 
-1. All four `/health` endpoints return `ok`.
+1. All four `/health/ready` endpoints return `ready`.
 2. A seller reading returns `SURPLUS`.
 3. A buyer reading returns `DEMAND`.
 4. RabbitMQ events are consumed and a completed match is created.
@@ -67,6 +69,6 @@ The script verifies:
 15. An error body carries a `code` and the request's correlation id, and no stack trace.
 
 The scripts read `OPERATOR_API_TOKEN` and `INTERNAL_API_TOKEN` from the
-environment and fall back to the development defaults the compose file uses.
+environment, or else from `infrastructure/.env`, and never print them.
 
 The script prints a final `Summary: N passed, M failed` line and exits with status `1` if any required check fails.

@@ -111,7 +111,8 @@ for a person. To look at them:
 docker exec solar-grid-rabbitmq rabbitmqctl list_queues name messages
 ```
 
-or the management UI at http://localhost:15672 (guest / guest), where a message
+or the management UI at http://localhost:15672 (`RABBITMQ_USER` and
+`RABBITMQ_PASSWORD` from `infrastructure/.env`), where a message
 can be inspected and moved back to `solar-grid.energy` once the cause is fixed.
 
 ## Publishing

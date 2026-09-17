@@ -32,7 +32,7 @@ each endpoint is deliberately assigned to one of them.
 | billing        | `POST /trades`                                                              | **internal service**           | Moves money; only trade-matching may record a trade                                                                  |
 | billing        | `GET /trades`, `GET /trades/:tradeId`, `GET /trades/household/:householdId` | public                         |                                                                                                                      |
 | billing        | `GET /balances/:householdId`, `GET /ledger/:householdId`                    | public                         |                                                                                                                      |
-| all            | `GET /health`                                                               | public                         |                                                                                                                      |
+| all            | `GET /health`, `/health/live`, `/health/ready`                              | public, not rate limited       |                                                                                                                      |
 
 That is every mutation in the system: one public and rate limited, two for
 operators, one for services. Reads are public because the dashboard planned for
@@ -272,10 +272,11 @@ which is how this stack runs; several instances would need a shared store.
 
 ## Calling the API locally
 
-The Docker stack uses development tokens unless you set your own:
+The Docker stack uses the tokens `pnpm env:init` generated in
+`infrastructure/.env`:
 
 ```bash
-OPERATOR=dev-operator-token-not-for-production
+OPERATOR=$(sed -n 's/^OPERATOR_API_TOKEN=//p' infrastructure/.env)
 
 # 401: no token
 curl -i -X POST http://localhost:3003/matching/run
@@ -290,13 +291,13 @@ curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"
 
 ## Configuration
 
-| Variable               | Default                             | Services                |
-| ---------------------- | ----------------------------------- | ----------------------- |
-| `OPERATOR_API_TOKEN`   | none (compose: development default) | pricing, trade-matching |
-| `INTERNAL_API_TOKEN`   | none (compose: development default) | trade-matching, billing |
-| `SWAGGER_ENABLED`      | on outside production               | all                     |
-| `CORS_ALLOWED_ORIGINS` | empty                               | all                     |
-| `RATE_LIMIT_ENABLED`   | `true`                              | all                     |
-| `RATE_LIMIT_TTL_MS`    | `60000`                             | all                     |
-| `RATE_LIMIT_MAX`       | `300`                               | all                     |
-| `RATE_LIMIT_WRITE_MAX` | `60`                                | all                     |
+| Variable               | Default                      | Services                |
+| ---------------------- | ---------------------------- | ----------------------- |
+| `OPERATOR_API_TOKEN`   | none; required in production | pricing, trade-matching |
+| `INTERNAL_API_TOKEN`   | none; required in production | trade-matching, billing |
+| `SWAGGER_ENABLED`      | on outside production        | all                     |
+| `CORS_ALLOWED_ORIGINS` | empty                        | all                     |
+| `RATE_LIMIT_ENABLED`   | `true`                       | all                     |
+| `RATE_LIMIT_TTL_MS`    | `60000`                      | all                     |
+| `RATE_LIMIT_MAX`       | `300`                        | all                     |
+| `RATE_LIMIT_WRITE_MAX` | `60`                         | all                     |
