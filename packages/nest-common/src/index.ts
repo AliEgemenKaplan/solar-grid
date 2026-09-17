@@ -8,3 +8,5 @@ export * from './validation/pagination';
 export * from './http/rate-limit';
 export * from './http/configure-http-app';
 export * from './http/correlation-id.decorator';
+export * from './health/readiness';
+export * from './health/health.module';

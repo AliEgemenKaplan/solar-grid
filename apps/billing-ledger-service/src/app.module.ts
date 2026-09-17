@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { RateLimitModule } from '@solar-grid/nest-common';
+import { databaseCheck, HealthModule, RateLimitModule } from '@solar-grid/nest-common';
 import { PrismaModule } from './prisma/prisma.module';
+import { PrismaService } from './prisma/prisma.service';
 import { TradesModule } from './trades/trades.module';
 import { BalancesModule } from './balances/balances.module';
 import { LedgerModule } from './ledger/ledger.module';
-import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
@@ -15,7 +15,11 @@ import { HealthController } from './health/health.controller';
     TradesModule,
     BalancesModule,
     LedgerModule,
+    HealthModule.forRoot({
+      service: 'billing-ledger-service',
+      inject: [PrismaService],
+      checks: (prisma: PrismaService) => [databaseCheck(() => prisma.$queryRaw`SELECT 1`)],
+    }),
   ],
-  controllers: [HealthController],
 })
 export class AppModule {}

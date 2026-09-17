@@ -15,5 +15,6 @@ import { buildRabbitMqConfig } from './topology';
     MatchingModule,
   ],
   providers: [EnergyEventsConsumer],
+  exports: [RabbitMQModule],
 })
 export class MessagingModule {}

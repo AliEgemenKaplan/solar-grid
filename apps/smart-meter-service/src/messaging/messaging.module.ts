@@ -31,6 +31,6 @@ import { EXCHANGE_SOLAR_GRID_ENERGY } from '@solar-grid/shared-contracts';
     }),
   ],
   providers: [OutboxPublisherService],
-  exports: [OutboxPublisherService],
+  exports: [OutboxPublisherService, RabbitMQModule],
 })
 export class MessagingModule {}
