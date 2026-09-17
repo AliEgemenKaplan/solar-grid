@@ -13,6 +13,7 @@ import { PrismaService } from './prisma/prisma.service';
 import { MessagingModule } from './messaging/messaging.module';
 import { ReadingsModule } from './readings/readings.module';
 import { HouseholdsModule } from './households/households.module';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { HouseholdsModule } from './households/households.module';
     PrismaModule,
     ReadingsModule,
     HouseholdsModule,
+    StatsModule,
     HealthModule.forRoot({
       service: 'smart-meter-service',
       imports: [MessagingModule],

@@ -26,6 +26,9 @@ model MeterReading {
   // A meter reports one reading per household per timestamp. This index also
   // serves "readings for this household, newest first".
   @@unique([householdId, timestamp])
+  // Statistics read a window over every household, which the unique index
+  // above cannot serve: it starts with the household.
+  @@index([timestamp])
   @@map("meter_readings")
 }
 

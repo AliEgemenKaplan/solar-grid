@@ -200,12 +200,18 @@ importers:
       '@types/node':
         specifier: ^24.13.4
         version: 24.13.4
+      '@types/supertest':
+        specifier: ^7.2.1
+        version: 7.2.1
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@24.13.4)(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3))
       prisma:
         specifier: ^5.10.0
         version: 5.22.0
+      supertest:
+        specifier: ^7.2.2
+        version: 7.2.2
       testcontainers:
         specifier: ^12.1.0
         version: 12.1.0
@@ -297,12 +303,18 @@ importers:
       '@types/node':
         specifier: ^24.13.4
         version: 24.13.4
+      '@types/supertest':
+        specifier: ^7.2.1
+        version: 7.2.1
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@24.13.4)(ts-node@10.9.2(@types/node@24.13.4)(typescript@5.9.3))
       prisma:
         specifier: ^5.10.0
         version: 5.22.0
+      supertest:
+        specifier: ^7.2.2
+        version: 7.2.2
       testcontainers:
         specifier: ^12.1.0
         version: 12.1.0
