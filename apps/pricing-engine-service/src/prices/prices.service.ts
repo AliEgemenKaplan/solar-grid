@@ -1,6 +1,7 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
+import { PricingMetrics } from '../metrics/pricing.metrics';
 import { RecalculatePriceDto } from './dto/recalculate-price.dto';
 import { PriceResponseDto } from '@solar-grid/shared-contracts';
 import { DecimalLike, formatEnergy, formatPrice, PRICE_SCALE } from '@solar-grid/shared-utils';
@@ -25,7 +26,10 @@ const DEFAULT_RULE = {
 export class PricesService implements OnModuleInit {
   private readonly logger = new Logger(PricesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly metrics: PricingMetrics = new PricingMetrics(),
+  ) {}
 
   async onModuleInit() {
     await this.seedDefaultRule();
@@ -101,6 +105,7 @@ export class PricesService implements OnModuleInit {
       },
     });
 
+    this.metrics.priceRecalculated();
     this.logger.log({
       event: 'price.recalculated',
       message: `Price recalculated: ${price} ${rule.currency}`,

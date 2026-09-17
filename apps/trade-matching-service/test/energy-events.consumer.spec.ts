@@ -17,6 +17,8 @@ import {
   validateEnergyEvent,
 } from '../src/messaging/energy-events.consumer';
 import { Prisma } from '../generated/client';
+import { MetricsRegistry } from '@solar-grid/nest-common';
+import { TradingMetrics } from '../src/metrics/trading.metrics';
 
 const uniqueViolation = () =>
   new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
@@ -214,6 +216,52 @@ describe('EnergyEventsConsumer correlation ids', () => {
     expect(body.correlationId).toBe('cid-retry');
     expect(options.correlationId).toBe('cid-retry');
     expect(options.headers['x-correlation-id']).toBe('cid-retry');
+  });
+});
+
+describe('EnergyEventsConsumer metrics', () => {
+  it('counts each message by type and outcome', async () => {
+    const registry = new MetricsRegistry('trade-matching-service');
+    const { mockPrisma, mockMatchingService, publish } = buildMocks();
+    const config: any = {
+      get: (key: string, fallback: string) =>
+        key === 'RABBITMQ_MAX_RETRIES' ? String(MAX_RETRIES) : fallback,
+    };
+    const consumer = new EnergyEventsConsumer(
+      mockPrisma,
+      mockMatchingService,
+      { publish } as any,
+      config,
+      new TradingMetrics(registry),
+    );
+
+    await consumer.handleEnergyEvent(surplusEvent, delivery());
+    mockPrisma.sellOffer.create.mockRejectedValueOnce(uniqueViolation());
+    await consumer.handleEnergyEvent(surplusEvent, delivery());
+    mockPrisma.buyRequest.create.mockRejectedValueOnce(new Error('database is not available'));
+    await consumer.handleEnergyEvent(demandEvent, delivery());
+    mockPrisma.buyRequest.create.mockRejectedValueOnce(new Error('still broken'));
+    await consumer.handleEnergyEvent(demandEvent, delivery(MAX_RETRIES));
+    await consumer.handleEnergyEvent({ ...surplusEvent, surplusKwh: 'lots' } as any, delivery());
+
+    const text = await registry.render();
+    const count = (type: string, outcome: string) => {
+      const line = text
+        .split('\n')
+        .find(
+          (candidate) =>
+            candidate.startsWith('solargrid_messages_total{') &&
+            candidate.includes(`event_type="${type}"`) &&
+            candidate.includes(`outcome="${outcome}"`),
+        );
+      return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+    };
+
+    expect(count('EnergySurplusDetected', 'processed')).toBe(1);
+    expect(count('EnergySurplusDetected', 'duplicate')).toBe(1);
+    expect(count('EnergyDemandDetected', 'retry_scheduled')).toBe(1);
+    expect(count('EnergyDemandDetected', 'dead_lettered')).toBe(1);
+    expect(count('EnergySurplusDetected', 'rejected')).toBe(1);
   });
 });
 

@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboxPublisherService } from '../messaging/outbox-publisher.service';
+import { SmartMeterMetrics } from '../metrics/smart-meter.metrics';
 import { CreateReadingDto, ReadingResponse, ReadingSummary } from './dto/create-reading.dto';
 import {
   BusinessRuleViolationException,
@@ -57,6 +58,7 @@ export class ReadingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxPublisherService,
+    @Optional() private readonly metrics: SmartMeterMetrics = new SmartMeterMetrics(),
   ) {}
 
   /**
@@ -119,6 +121,7 @@ export class ReadingsService {
     });
     if (existing) {
       // A client retry, answered from what was stored the first time.
+      this.metrics.readingReceived('duplicate');
       this.logger.log({
         event: 'reading.duplicate',
         message: 'Duplicate reading answered from the stored one',
@@ -188,7 +191,9 @@ export class ReadingsService {
         return { reading: created, outboxRecord: record };
       });
 
+      this.metrics.readingReceived('created');
       if (outboxRecord) {
+        this.metrics.outboxEventCreated();
         this.logger.log({
           event: 'outbox.event.created',
           message: `Queued ${outboxRecord.eventType} for ${dto.householdId}`,
@@ -211,6 +216,7 @@ export class ReadingsService {
           where: { householdId_timestamp: { householdId: dto.householdId, timestamp } },
         });
         if (winner) {
+          this.metrics.readingReceived('duplicate');
           this.logger.log({
             event: 'reading.duplicate',
             message: 'Concurrent duplicate reading answered from the stored one',

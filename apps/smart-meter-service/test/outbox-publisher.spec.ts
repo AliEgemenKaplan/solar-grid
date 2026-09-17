@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { OutboxPublisherService } from '../src/messaging/outbox-publisher.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { MetricsRegistry } from '@solar-grid/nest-common';
+import { SmartMeterMetrics } from '../src/metrics/smart-meter.metrics';
 
 function pendingEvent(id: string) {
   return {
@@ -95,3 +97,33 @@ async function waitUntil(condition: () => boolean) {
   }
   if (!condition()) throw new Error('condition was never met');
 }
+
+describe('OutboxPublisherService metrics', () => {
+  it('counts published events, broker failures and pending events', async () => {
+    const registry = new MetricsRegistry('smart-meter-service');
+    const findMany = jest.fn().mockResolvedValue([pendingEvent('1'), pendingEvent('2')]);
+    const count = jest.fn().mockResolvedValue(1);
+    const prisma = {
+      outboxEvent: { findMany, update: jest.fn().mockResolvedValue({}), count },
+    } as unknown as PrismaService;
+    const publish = jest
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('connection closed'));
+    const config = { get: (_key: string, fallback: string) => fallback } as ConfigService;
+    const publisher = new OutboxPublisherService(
+      prisma,
+      { publish } as unknown as AmqpConnection,
+      config,
+      new SmartMeterMetrics(registry, prisma),
+    );
+
+    await publisher.drain();
+    const text = await registry.render();
+
+    expect(text).toMatch(/solargrid_outbox_events_published_total\{[^}]*\} 1/);
+    expect(text).toMatch(/solargrid_outbox_publish_failures_total\{reason="broker"[^}]*\} 1/);
+    expect(text).toMatch(/solargrid_dependency_failures_total\{dependency="rabbitmq"[^}]*\} 1/);
+    expect(text).toMatch(/solargrid_outbox_events_pending\{[^}]*\} 1/);
+  });
+});

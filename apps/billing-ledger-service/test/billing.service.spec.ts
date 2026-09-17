@@ -1,7 +1,9 @@
 import {
   BusinessRuleViolationException,
   IdempotencyConflictException,
+  MetricsRegistry,
 } from '@solar-grid/nest-common';
+import { LedgerMetrics } from '../src/metrics/ledger.metrics';
 import { TradesService } from '../src/trades/trades.service';
 import { CreateTradeDto } from '../src/trades/dto/create-trade.dto';
 import { expectedTotal, tradeRequestFingerprint } from '../src/trades/request-fingerprint';
@@ -245,6 +247,43 @@ describe('TradesService - money movement', () => {
       energyKwh: '4.000',
       pricePerKwh: '4.7500',
       totalAmount: '19.00',
+    });
+  });
+});
+
+describe('TradesService - metrics', () => {
+  function outcomes(text: string) {
+    const counts: Record<string, number> = {};
+    for (const match of text.matchAll(
+      /solargrid_settlements_total\{outcome="(\w+)"[^}]*\} (\d+)/g,
+    )) {
+      counts[match[1]] = Number(match[2]);
+    }
+    return counts;
+  }
+
+  it('counts every settlement request by outcome', async () => {
+    jest.clearAllMocks();
+    const registry = new MetricsRegistry('billing-ledger-service');
+    const service = new TradesService(mockPrisma, new LedgerMetrics(registry));
+
+    givenNewKey();
+    await service.createTrade(buildTradeDto());
+
+    givenRecordedKey(tradeRequestFingerprint(buildTradeDto()));
+    await service.createTrade(buildTradeDto());
+    await expect(
+      service.createTrade(buildTradeDto({ energyKwh: '5.000', totalAmount: '23.75' })),
+    ).rejects.toThrow(IdempotencyConflictException);
+    await expect(
+      service.createTrade(buildTradeDto({ buyerHouseholdId: 'HH-SELLER-001' })),
+    ).rejects.toThrow(BusinessRuleViolationException);
+
+    expect(outcomes(await registry.render())).toEqual({
+      recorded: 1,
+      replayed: 1,
+      idempotency_conflict: 1,
+      rejected: 1,
     });
   });
 });

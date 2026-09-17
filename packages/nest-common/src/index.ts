@@ -15,3 +15,5 @@ export * from './config/runtime-safety';
 export * from './errors/dependency-errors';
 export * from './logging/structured-logger';
 export * from './http/request-observation';
+export * from './metrics/metrics-registry';
+export * from './metrics/metrics.module';

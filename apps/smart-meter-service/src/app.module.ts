@@ -4,6 +4,7 @@ import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import {
   databaseCheck,
   HealthModule,
+  MetricsModule,
   rabbitMqCheck,
   RateLimitModule,
 } from '@solar-grid/nest-common';
@@ -17,6 +18,7 @@ import { HouseholdsModule } from './households/households.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     RateLimitModule.forRoot(),
+    MetricsModule.forRoot({ service: 'smart-meter-service' }),
     PrismaModule,
     ReadingsModule,
     HouseholdsModule,

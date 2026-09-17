@@ -8,6 +8,7 @@ import {
   Module,
   ModuleMetadata,
   OnModuleDestroy,
+  Optional,
   Res,
 } from '@nestjs/common';
 import type { InjectionToken } from '@nestjs/common';
@@ -22,6 +23,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { DependencyCheck, evaluateReadiness, ReadinessReport } from './readiness';
+import { Dependency, MetricsRegistry } from '../metrics/metrics-registry';
 
 const HEALTH_SERVICE_NAME = Symbol('HEALTH_SERVICE_NAME');
 const DEPENDENCY_CHECKS = Symbol('DEPENDENCY_CHECKS');
@@ -101,6 +103,7 @@ export class HealthController {
     @Inject(HEALTH_SERVICE_NAME) private readonly service: string,
     @Inject(DEPENDENCY_CHECKS) private readonly checks: DependencyCheck[],
     private readonly lifecycle: ApplicationLifecycle,
+    @Optional() private readonly metrics?: MetricsRegistry,
   ) {}
 
   @Get()
@@ -147,6 +150,10 @@ export class HealthController {
     });
 
     if (report.status !== 'shutting_down') {
+      for (const [name, check] of Object.entries(report.checks)) {
+        this.metrics?.dependencyStatus(name, check.status === 'up');
+        if (check.status === 'down') this.metrics?.dependencyFailed(name as Dependency);
+      }
       for (const name of this.down) {
         if (!failedNow.has(name)) {
           this.logger.log({

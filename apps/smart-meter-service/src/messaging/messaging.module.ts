@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { RabbitMQModule } from '@golevelup/nestjs-rabbitmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { OutboxPublisherService } from './outbox-publisher.service';
+import { SmartMeterMetrics } from '../metrics/smart-meter.metrics';
 import { EXCHANGE_SOLAR_GRID_ENERGY } from '@solar-grid/shared-contracts';
 
 @Module({
@@ -30,7 +31,7 @@ import { EXCHANGE_SOLAR_GRID_ENERGY } from '@solar-grid/shared-contracts';
       inject: [ConfigService],
     }),
   ],
-  providers: [OutboxPublisherService],
-  exports: [OutboxPublisherService, RabbitMQModule],
+  providers: [OutboxPublisherService, SmartMeterMetrics],
+  exports: [OutboxPublisherService, SmartMeterMetrics, RabbitMQModule],
 })
 export class MessagingModule {}

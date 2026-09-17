@@ -1,6 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { databaseCheck, HealthModule, RateLimitModule } from '@solar-grid/nest-common';
+import {
+  databaseCheck,
+  HealthModule,
+  MetricsModule,
+  RateLimitModule,
+} from '@solar-grid/nest-common';
 import { PrismaModule } from './prisma/prisma.module';
 import { PrismaService } from './prisma/prisma.service';
 import { TradesModule } from './trades/trades.module';
@@ -11,6 +16,7 @@ import { LedgerModule } from './ledger/ledger.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     RateLimitModule.forRoot(),
+    MetricsModule.forRoot({ service: 'billing-ledger-service' }),
     PrismaModule,
     TradesModule,
     BalancesModule,

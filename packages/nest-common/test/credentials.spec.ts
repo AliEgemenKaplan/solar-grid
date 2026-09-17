@@ -2,16 +2,19 @@ import { bearerTokenFrom, CredentialVerifier } from '../src/auth/credentials';
 
 const OPERATOR = 'operator-token-0123456789abcdef0123456789';
 const INTERNAL = 'internal-token-0123456789abcdef0123456789';
+const METRICS = 'metrics-token-0123456789abcdef01234567890';
 
 describe('CredentialVerifier', () => {
   const verifier = new CredentialVerifier({
     operatorToken: OPERATOR,
     internalServiceToken: INTERNAL,
+    metricsToken: METRICS,
   });
 
   it('recognises each configured token as its own principal', () => {
     expect(verifier.identify(OPERATOR)).toBe('operator');
     expect(verifier.identify(INTERNAL)).toBe('internal-service');
+    expect(verifier.identify(METRICS)).toBe('metrics');
   });
 
   it('recognises nothing else', () => {
@@ -75,6 +78,18 @@ describe('CredentialVerifier.configurationWarnings', () => {
         ['operator', 'internal-service'],
       ),
     ).toEqual([expect.stringContaining('identical')]);
+  });
+
+  it('requires the metrics token where metrics are served, and keeps it distinct', () => {
+    expect(CredentialVerifier.configurationWarnings({}, ['metrics'])).toEqual([
+      expect.stringContaining('METRICS_TOKEN is not set'),
+    ]);
+    expect(
+      CredentialVerifier.configurationWarnings(
+        { operatorToken: OPERATOR, metricsToken: OPERATOR },
+        ['operator', 'metrics'],
+      ),
+    ).toEqual([expect.stringContaining('OPERATOR_API_TOKEN and METRICS_TOKEN are identical')]);
   });
 
   it('never repeats a token value in a warning', () => {

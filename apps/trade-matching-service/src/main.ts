@@ -22,7 +22,7 @@ async function bootstrap() {
     description:
       'Matches surplus with demand first-come-first-served, reserving energy before billing it.',
     tags: ['Matching', 'Offers', 'Requests', 'Health'],
-    credentials: ['operator', 'internal-service'],
+    credentials: ['operator', 'internal-service', 'metrics'],
   });
 
   // Nest's own shutdown hooks are not enabled: this handler runs the same

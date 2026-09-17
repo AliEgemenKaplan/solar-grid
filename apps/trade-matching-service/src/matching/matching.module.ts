@@ -6,6 +6,7 @@ import { MatchingService } from './matching.service';
 import { PricingClient } from '../clients/pricing.client';
 import { BillingClient } from '../clients/billing.client';
 import { MarketQueriesService } from './market-queries.service';
+import { TradingMetrics } from '../metrics/trading.metrics';
 
 const DEFAULT_HTTP_TIMEOUT_MS = 5000;
 
@@ -25,7 +26,7 @@ const DEFAULT_HTTP_TIMEOUT_MS = 5000;
     }),
   ],
   controllers: [MatchingController],
-  providers: [MatchingService, MarketQueriesService, PricingClient, BillingClient],
-  exports: [MatchingService, MarketQueriesService],
+  providers: [MatchingService, MarketQueriesService, PricingClient, BillingClient, TradingMetrics],
+  exports: [MatchingService, MarketQueriesService, TradingMetrics],
 })
 export class MatchingModule {}

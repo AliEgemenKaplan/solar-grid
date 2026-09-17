@@ -27,6 +27,7 @@ const SECRETS = new Set([
   'RABBITMQ_PASSWORD',
   'OPERATOR_API_TOKEN',
   'INTERNAL_API_TOKEN',
+  'METRICS_TOKEN',
 ]);
 
 const ASSIGNMENT = /^([A-Z][A-Z0-9_]*)=(.*)$/;

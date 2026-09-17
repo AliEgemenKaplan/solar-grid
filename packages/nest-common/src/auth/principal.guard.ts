@@ -24,11 +24,13 @@ export const REQUIRED_PRINCIPAL_KEY = 'solar-grid:required-principal';
 /** Swagger security scheme names, registered in configureHttpApp. */
 export const OPERATOR_AUTH_SCHEME = 'operator';
 export const INTERNAL_SERVICE_AUTH_SCHEME = 'internal-service';
+export const METRICS_AUTH_SCHEME = 'metrics';
 
 export function verifierFromConfig(config: ConfigService): CredentialVerifier {
   return new CredentialVerifier({
     operatorToken: config.get<string>('OPERATOR_API_TOKEN'),
     internalServiceToken: config.get<string>('INTERNAL_API_TOKEN'),
+    metricsToken: config.get<string>('METRICS_TOKEN'),
   });
 }
 
@@ -133,4 +135,9 @@ export function RequiresOperator() {
 /** For calls between Solar Grid services, such as recording a trade in the ledger. */
 export function RequiresInternalService() {
   return requires('internal-service', INTERNAL_SERVICE_AUTH_SCHEME);
+}
+
+/** For whatever scrapes operational metrics. */
+export function RequiresMetricsReader() {
+  return requires('metrics', METRICS_AUTH_SCHEME);
 }

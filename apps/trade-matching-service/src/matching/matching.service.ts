@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingClient } from '../clients/pricing.client';
 import { BillingClient, BillingRejectedError } from '../clients/billing.client';
@@ -13,6 +13,8 @@ import {
 } from '@solar-grid/shared-utils';
 import { PlannedTrade, planTrades } from './matching.planner';
 import type { Prisma, SellOffer, BuyRequest, TradeMatch } from '../../generated/client';
+import { isDatabaseUnavailable } from '@solar-grid/nest-common';
+import { TradingMetrics } from '../metrics/trading.metrics';
 
 export interface MatchResult {
   matched: number;
@@ -61,6 +63,7 @@ export class MatchingService {
     private readonly prisma: PrismaService,
     private readonly pricingClient: PricingClient,
     private readonly billingClient: BillingClient,
+    @Optional() private readonly metrics: TradingMetrics = new TradingMetrics(),
   ) {}
 
   /**
@@ -73,6 +76,18 @@ export class MatchingService {
    * than charged again.
    */
   async runMatching(correlationId: string): Promise<MatchResult> {
+    try {
+      return await this.match(correlationId);
+    } catch (err) {
+      if (!(err instanceof PricingUnavailableError)) {
+        this.metrics.matchingRun('failed');
+        if (isDatabaseUnavailable(err)) this.metrics.databaseUnavailable();
+      }
+      throw err;
+    }
+  }
+
+  private async match(correlationId: string): Promise<MatchResult> {
     const started = Date.now();
     const result: MatchResult = { matched: 0, failed: 0, skipped: 0, pending: 0, settled: 0 };
     this.logger.log({ event: 'matching.started', message: 'Matching run started', correlationId });
@@ -125,6 +140,7 @@ export class MatchingService {
         correlationId,
       });
     } catch (err) {
+      this.metrics.matchingRun('pricing_unavailable');
       this.logger.error({
         event: 'pricing.request.failed',
         message: 'Could not fetch the current price; nothing was reserved',
@@ -166,6 +182,7 @@ export class MatchingService {
     correlationId: string,
     extra: Record<string, unknown> = {},
   ): void {
+    this.metrics.matchingRun('completed');
     this.logger.log({
       event: 'matching.completed',
       message: `Matching run completed: ${result.matched} matched`,
@@ -239,6 +256,7 @@ export class MatchingService {
           },
         });
 
+        this.metrics.tradeReserved();
         this.logger.log({
           event: 'trade.reserved',
           message: 'Energy reserved on both sides; billing next',
@@ -305,6 +323,7 @@ export class MatchingService {
         },
       });
 
+      this.metrics.billingOutcome('settled');
       this.logger.log({
         event: 'trade.settled',
         message: response.duplicate
@@ -323,6 +342,7 @@ export class MatchingService {
 
       if (err instanceof BillingRejectedError) {
         await this.releaseReservation(match, reason);
+        this.metrics.billingOutcome('rejected');
         this.logger.error({
           event: 'trade.failed',
           message: 'Billing refused the trade; the energy was released',
@@ -341,6 +361,7 @@ export class MatchingService {
         where: { id: match.id },
         data: { failureReason: reason },
       });
+      this.metrics.billingOutcome('unknown');
       this.logger.warn({
         event: 'billing.request.failed',
         message: 'Billing did not answer; the trade stays reserved for the next run',

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTradeDto } from './dto/create-trade.dto';
@@ -15,6 +15,7 @@ import {
   toPage,
 } from '@solar-grid/nest-common';
 import { CompletedTrade, Prisma } from '../../generated/client';
+import { LedgerMetrics } from '../metrics/ledger.metrics';
 
 export interface RecordedTrade {
   trade: CompletedTradeResponse;
@@ -26,7 +27,10 @@ export interface RecordedTrade {
 export class TradesService {
   private readonly logger = new Logger(TradesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly metrics: LedgerMetrics = new LedgerMetrics(),
+  ) {}
 
   /**
    * Records a completed trade exactly once.
@@ -37,6 +41,23 @@ export class TradesService {
    *   impossible trade             → 422 BUSINESS_RULE_VIOLATION
    */
   async createTrade(dto: CreateTradeDto): Promise<RecordedTrade> {
+    try {
+      const recorded = await this.recordTrade(dto);
+      this.metrics.settlement(recorded.created ? 'recorded' : 'replayed');
+      return recorded;
+    } catch (err) {
+      if (err instanceof IdempotencyConflictException) {
+        this.metrics.settlement('idempotency_conflict');
+      } else if (err instanceof ResourceConflictException) {
+        this.metrics.settlement('conflict');
+      } else if (err instanceof BusinessRuleViolationException) {
+        this.metrics.settlement('rejected');
+      }
+      throw err;
+    }
+  }
+
+  private async recordTrade(dto: CreateTradeDto): Promise<RecordedTrade> {
     this.assertBusinessRules(dto);
 
     const fingerprint = tradeRequestFingerprint(dto);

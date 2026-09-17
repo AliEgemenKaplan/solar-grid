@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@solar-grid/shared-contracts": "workspace:*",
-    "@solar-grid/shared-utils": "workspace:*"
+    "@solar-grid/shared-utils": "workspace:*",
+    "prom-client": "^15.1.3"
   },
   "peerDependencies": {
     "@nestjs/common": "^11.0.0",

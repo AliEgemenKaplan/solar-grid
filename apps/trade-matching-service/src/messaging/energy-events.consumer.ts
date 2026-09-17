@@ -1,4 +1,4 @@
-import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AmqpConnection,
@@ -27,6 +27,8 @@ import {
   retryRoutingKey,
 } from '@solar-grid/shared-contracts';
 import { isDecimalWithin, normalizeCorrelationId } from '@solar-grid/shared-utils';
+import { isDatabaseUnavailable } from '@solar-grid/nest-common';
+import { TradingMetrics } from '../metrics/trading.metrics';
 import { PrismaService } from '../prisma/prisma.service';
 import { MatchingService } from '../matching/matching.service';
 import { readRetryConfig, retryDelayMs, RetryConfig } from './retry.config';
@@ -42,6 +44,7 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
     private readonly matchingService: MatchingService,
     private readonly amqp: AmqpConnection,
     config: ConfigService,
+    @Optional() private readonly metrics: TradingMetrics = new TradingMetrics(),
   ) {
     this.retryConfig = readRetryConfig(config);
   }
@@ -115,6 +118,7 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
     if (problem) {
       // No number of retries turns a malformed message into a valid one.
       await this.parkInDeadLetterQueue(received, amqpMsg, `unprocessable: ${problem}`, attempt);
+      this.metrics.messageHandled(eventTypeOf(received), 'rejected');
       return;
     }
 
@@ -148,6 +152,7 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
         await this.matchingService.runMatching(event.correlationId);
       }
 
+      this.metrics.messageHandled(event.eventType, created ? 'processed' : 'duplicate');
       this.logger.log({
         event: 'message.processed',
         message: `Processed ${event.eventType}`,
@@ -157,13 +162,16 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       });
     } catch (err) {
       const reason = describe(err);
+      if (isDatabaseUnavailable(err)) this.metrics.databaseUnavailable();
 
       if (attempt > this.retryConfig.maxRetries) {
         await this.parkInDeadLetterQueue(event, amqpMsg, reason, attempt);
+        this.metrics.messageHandled(event.eventType, 'dead_lettered');
         return;
       }
 
       await this.scheduleRetry(event, amqpMsg, reason, attempt);
+      this.metrics.messageHandled(event.eventType, 'retry_scheduled');
     }
   }
 
@@ -362,6 +370,11 @@ function deliveriesInProgress(amqp: AmqpConnection): Promise<unknown>[] {
   const tracked = (amqp as unknown as { outstandingMessageProcessing?: Set<Promise<unknown>> })
     .outstandingMessageProcessing;
   return tracked ? [...tracked] : [];
+}
+
+function eventTypeOf(event: unknown): string | undefined {
+  const type = (event as { eventType?: unknown } | null)?.eventType;
+  return typeof type === 'string' ? type : undefined;
 }
 
 /** How many times this message has already been retried. */

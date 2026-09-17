@@ -1,9 +1,16 @@
-import { BeforeApplicationShutdown, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  BeforeApplicationShutdown,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { ConfigService } from '@nestjs/config';
 import type { ConfirmChannel, ConsumeMessage } from 'amqplib';
 import { EXCHANGE_SOLAR_GRID_ENERGY, HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { SmartMeterMetrics } from '../metrics/smart-meter.metrics';
 
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_PUBLISH_TIMEOUT_MS = 5000;
@@ -55,6 +62,7 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
     private readonly prisma: PrismaService,
     private readonly amqp: AmqpConnection,
     config: ConfigService,
+    @Optional() private readonly metrics: SmartMeterMetrics = new SmartMeterMetrics(),
   ) {
     this.pollIntervalMs = Number(
       config.get<string>('OUTBOX_POLL_INTERVAL_MS', String(DEFAULT_POLL_INTERVAL_MS)),
@@ -179,6 +187,7 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
         await this.recordFailure(
           event,
           `no queue is bound for ${event.routingKey}; the broker returned the message`,
+          'unroutable',
         );
         return 'unroutable';
       }
@@ -188,6 +197,7 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
         data: { status: 'PUBLISHED', publishedAt: new Date() },
       });
 
+      this.metrics.outboxEventPublished();
       this.logger.log({
         event: 'outbox.event.published',
         message: `Published ${event.eventType}`,
@@ -199,12 +209,17 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
       });
       return null;
     } catch (err) {
-      await this.recordFailure(event, describe(err));
+      await this.recordFailure(event, describe(err), 'broker');
       return 'broker';
     }
   }
 
-  private async recordFailure(event: PendingEvent, reason: string): Promise<void> {
+  private async recordFailure(
+    event: PendingEvent,
+    reason: string,
+    kind: PublishFailure,
+  ): Promise<void> {
+    this.metrics.outboxPublishFailed(kind);
     await this.prisma.outboxEvent.update({
       where: { id: event.id },
       data: { attempts: { increment: 1 }, lastError: reason },

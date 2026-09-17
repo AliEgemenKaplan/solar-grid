@@ -10,6 +10,7 @@ jest.setTimeout(300_000);
 
 const OPERATOR_TOKEN = 'test-operator-token-0123456789abcdef0123';
 const INTERNAL_TOKEN = 'test-internal-token-0123456789abcdef0123';
+const METRICS_TOKEN = 'test-metrics-token-0123456789abcdef01234';
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -25,6 +26,7 @@ async function startApp(databaseUrl: string, env: Record<string, string> = {}) {
     DATABASE_URL: databaseUrl,
     OPERATOR_API_TOKEN: OPERATOR_TOKEN,
     INTERNAL_API_TOKEN: INTERNAL_TOKEN,
+    METRICS_TOKEN,
     RATE_LIMIT_ENABLED: 'false',
     ...env,
   };
@@ -383,6 +385,50 @@ describe('billing HTTP API', () => {
         .set('Origin', 'http://evil.example');
 
       expect(response.headers['access-control-allow-origin']).toBeUndefined();
+    });
+  });
+
+  describe('metrics', () => {
+    const scrape = (token?: string) => {
+      const req = request(app.getHttpServer()).get('/metrics');
+      return token ? req.set('Authorization', `Bearer ${token}`) : req;
+    };
+
+    it('serves metrics only to the metrics token', async () => {
+      expect((await scrape()).status).toBe(401);
+      expect((await scrape(INTERNAL_TOKEN)).status).toBe(403);
+      expect((await scrape(OPERATOR_TOKEN)).status).toBe(403);
+      expect((await scrape(METRICS_TOKEN)).status).toBe(200);
+    });
+
+    it('reports HTTP traffic by route template and settlements by outcome', async () => {
+      const recorded = trade();
+      await post(recorded, INTERNAL_TOKEN).expect(201);
+      await post(recorded, INTERNAL_TOKEN).expect(200);
+      await request(app.getHttpServer()).get(`/trades/${recorded.tradeId}`).expect(200);
+
+      const response = await scrape(METRICS_TOKEN);
+
+      expect(response.headers['content-type']).toContain('text/plain');
+      expect(response.headers['cache-control']).toBe('no-store');
+      const text = response.text;
+      const routeLine = text
+        .split('\n')
+        .find(
+          (line) =>
+            line.startsWith('solargrid_http_requests_total{') &&
+            line.includes('route="/trades/:tradeId"') &&
+            line.includes('status="200"') &&
+            line.includes('service="billing-ledger-service"'),
+        );
+      expect(routeLine).toBeDefined();
+      expect(text).toMatch(/solargrid_settlements_total\{outcome="recorded"[^}]*\} \d+/);
+      expect(text).toMatch(/solargrid_settlements_total\{outcome="replayed"[^}]*\} \d+/);
+      // Counts only: no trade ids, no tokens, no correlation ids.
+      expect(text).not.toContain(recorded.tradeId);
+      expect(text).not.toContain(INTERNAL_TOKEN);
+      expect(text).not.toContain(METRICS_TOKEN);
+      expect(text).not.toContain(recorded.correlationId);
     });
   });
 

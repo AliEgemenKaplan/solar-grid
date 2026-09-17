@@ -21,6 +21,12 @@ x-http-platform: &http-platform
   # Kept below stop_grace_period, so the service gives up waiting on its own
   # before Docker kills it.
   SHUTDOWN_TIMEOUT_MS: 25000
+  # One JSON object per log line; `docker compose logs <service>` is the place
+  # to read them.
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  LOG_LEVEL: ${LOG_LEVEL:-log}
+  # Read-only access to /metrics, and nothing else.
+  METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN in infrastructure/.env (pnpm env:init)}
 
 # What every Node container gets: a read-only root filesystem with a small
 # writable /tmp, no Linux capabilities, no privilege escalation.

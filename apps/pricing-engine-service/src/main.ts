@@ -21,7 +21,7 @@ async function bootstrap() {
     title: 'Pricing Engine Service',
     description: 'Dynamic local energy pricing based on neighbourhood supply and demand.',
     tags: ['Prices', 'Health'],
-    credentials: ['operator'],
+    credentials: ['operator', 'metrics'],
   });
 
   // Nest's own shutdown hooks are not enabled: this handler runs the same

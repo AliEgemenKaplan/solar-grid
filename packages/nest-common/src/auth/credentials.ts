@@ -8,12 +8,16 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * - `internal-service`: another Solar Grid service, for the calls that write
  *   money. Never shipped to a browser either, and never the same value as the
  *   operator token, so the two can be told apart.
+ * - `metrics`: whatever scrapes /metrics. It can read operational counters
+ *   and nothing else, so a service holds this token rather than a token that
+ *   could also trigger a matching run or record a trade.
  */
-export type PrincipalKind = 'operator' | 'internal-service';
+export type PrincipalKind = 'operator' | 'internal-service' | 'metrics';
 
 export interface CredentialConfig {
   operatorToken?: string;
   internalServiceToken?: string;
+  metricsToken?: string;
 }
 
 /** Shorter tokens are accepted but flagged, since they are guessable. */
@@ -34,27 +38,33 @@ export const DEVELOPMENT_TOKEN_MARKER = 'not-for-production';
 export class CredentialVerifier {
   private readonly operatorDigest: Buffer | null;
   private readonly internalDigest: Buffer | null;
+  private readonly metricsDigest: Buffer | null;
 
   constructor(config: CredentialConfig) {
     this.operatorDigest = digestOf(config.operatorToken);
     this.internalDigest = digestOf(config.internalServiceToken);
+    this.metricsDigest = digestOf(config.metricsToken);
   }
 
   /** True when at least one token is configured; otherwise nothing authenticates. */
   get isConfigured(): boolean {
-    return this.operatorDigest !== null || this.internalDigest !== null;
+    return (
+      this.operatorDigest !== null || this.internalDigest !== null || this.metricsDigest !== null
+    );
   }
 
   identify(presented: string | undefined): PrincipalKind | null {
     const candidate = digestOf(presented);
     if (!candidate) return null;
 
-    // Evaluate both before deciding, rather than returning on the first match.
+    // Evaluate all of them before deciding, rather than returning on the first match.
     const isOperator = matches(candidate, this.operatorDigest);
     const isInternal = matches(candidate, this.internalDigest);
+    const isMetrics = matches(candidate, this.metricsDigest);
 
     if (isOperator) return 'operator';
     if (isInternal) return 'internal-service';
+    if (isMetrics) return 'metrics';
     return null;
   }
 
@@ -68,7 +78,7 @@ export class CredentialVerifier {
     environment?: string,
   ): string[] {
     const warnings: string[] = [];
-    const { operatorToken, internalServiceToken } = config;
+    const { operatorToken, internalServiceToken, metricsToken } = config;
 
     const check = (name: string, value: string | undefined, consequence: string) => {
       if (!value) {
@@ -88,11 +98,25 @@ export class CredentialVerifier {
     if (uses.includes('internal-service')) {
       check('INTERNAL_API_TOKEN', internalServiceToken, 'service-to-service calls will be refused');
     }
+    if (uses.includes('metrics')) {
+      check('METRICS_TOKEN', metricsToken, '/metrics will refuse every scrape');
+    }
 
-    if (operatorToken && internalServiceToken && operatorToken === internalServiceToken) {
-      warnings.push(
-        'OPERATOR_API_TOKEN and INTERNAL_API_TOKEN are identical: operator and service calls cannot be told apart.',
-      );
+    const named: Array<[string, string | undefined]> = [
+      ['OPERATOR_API_TOKEN', operatorToken],
+      ['INTERNAL_API_TOKEN', internalServiceToken],
+      ['METRICS_TOKEN', metricsToken],
+    ];
+    for (let i = 0; i < named.length; i++) {
+      for (let j = i + 1; j < named.length; j++) {
+        const [firstName, first] = named[i];
+        const [secondName, second] = named[j];
+        if (first && second && first === second) {
+          warnings.push(
+            `${firstName} and ${secondName} are identical: the roles they grant cannot be told apart.`,
+          );
+        }
+      }
     }
 
     return warnings;

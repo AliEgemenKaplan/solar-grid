@@ -8,7 +8,12 @@ import { getOrGenerateCorrelationId } from '@solar-grid/shared-utils';
 import { AllExceptionsFilter } from '../errors/all-exceptions.filter';
 import { ApiErrorResponse } from '../errors/api-error';
 import { CredentialVerifier, PrincipalKind } from '../auth/credentials';
-import { INTERNAL_SERVICE_AUTH_SCHEME, OPERATOR_AUTH_SCHEME } from '../auth/principal.guard';
+import {
+  INTERNAL_SERVICE_AUTH_SCHEME,
+  METRICS_AUTH_SCHEME,
+  OPERATOR_AUTH_SCHEME,
+} from '../auth/principal.guard';
+import { MetricsRegistry } from '../metrics/metrics-registry';
 import { connectionUrlProblems, enforceOrWarn } from '../config/runtime-safety';
 import { observeRequests } from './request-observation';
 
@@ -75,7 +80,8 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
   });
 
   // After the correlation id is settled, so every request line carries it.
-  app.use(observeRequests());
+  const metrics = metricsOf(app);
+  app.use(observeRequests(metrics ? [(observation) => metrics.observeRequest(observation)] : []));
 
   // Swagger UI needs inline scripts and styles; a JSON API does not. The
   // content security policy is only relaxed when the UI is actually served.
@@ -107,7 +113,9 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
       transform: true,
     }),
   );
-  app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalFilters(
+    new AllExceptionsFilter((dependency) => metrics?.dependencyFailed(dependency)),
+  );
 
   // Never the values, only whether they are usable. In production any of
   // these stops the service; elsewhere they are warnings.
@@ -118,6 +126,7 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
         {
           operatorToken: config.get<string>('OPERATOR_API_TOKEN'),
           internalServiceToken: config.get<string>('INTERNAL_API_TOKEN'),
+          metricsToken: config.get<string>('METRICS_TOKEN'),
         },
         options.credentials,
         environment,
@@ -141,6 +150,10 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
       .addBearerAuth(
         { type: 'http', scheme: 'bearer', description: 'INTERNAL_API_TOKEN' },
         INTERNAL_SERVICE_AUTH_SCHEME,
+      )
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', description: 'METRICS_TOKEN' },
+        METRICS_AUTH_SCHEME,
       );
     for (const tag of options.tags) builder.addTag(tag);
 
@@ -162,4 +175,13 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
   });
 
   return { swaggerEnabled, corsOrigins };
+}
+
+/** The service's metrics, when it registered MetricsModule. */
+function metricsOf(app: INestApplication): MetricsRegistry | undefined {
+  try {
+    return app.get(MetricsRegistry, { strict: false });
+  } catch {
+    return undefined;
+  }
 }
