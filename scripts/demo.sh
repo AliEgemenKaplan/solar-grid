@@ -165,7 +165,9 @@ fi
 echo
 
 echo "3. Seller reading"
-seller_body="{\"householdId\":\"$SELLER_ID\",\"productionKwh\":10,\"consumptionKwh\":3,\"timestamp\":\"2026-05-27T10:00:00.000Z\"}"
+# A surplus of exactly what the buyer needs (4 kWh), so a run leaves no open
+# offer behind to be matched with the next run's buyer.
+seller_body="{\"householdId\":\"$SELLER_ID\",\"productionKwh\":10,\"consumptionKwh\":6,\"timestamp\":\"2026-05-27T10:00:00.000Z\"}"
 if seller_response="$(request POST "$BASE_SMART_METER/readings" "$seller_body" 2>/dev/null)"; then
   seller_status="$(printf '%s' "$seller_response" | json_value status)"
   seller_surplus="$(printf '%s' "$seller_response" | json_value surplusKwh)"

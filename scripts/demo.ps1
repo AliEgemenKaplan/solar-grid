@@ -114,10 +114,12 @@ if ($price) {
 Write-Host ""
 
 Write-Host "3. Seller reading"
+# A surplus of exactly what the buyer needs (4 kWh), so a run leaves no open
+# offer behind to be matched with the next run's buyer.
 $sellerReading = @{
     householdId = $SellerId
     productionKwh = 10
-    consumptionKwh = 3
+    consumptionKwh = 6
     timestamp = "2026-05-27T10:00:00.000Z"
 }
 $sellerResponse = Invoke-JsonApi -Method POST -Url "$BASE_SMART_METER/readings" -Body $sellerReading

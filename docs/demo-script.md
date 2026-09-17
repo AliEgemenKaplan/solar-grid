@@ -48,7 +48,9 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 
 ## What The Demo Verifies
 
-Each demo run generates unique household IDs, so it can be repeated without manually clearing old demo data.
+Each demo run generates unique household IDs, so it can be repeated without manually clearing old demo data. The seller's surplus equals the buyer's demand (4 kWh), so a run leaves no open offer behind for the next run's buyer to be matched with.
+
+`scripts/resilience.sh` is the other half: it takes dependencies away and checks that the stack recovers. It changes the stack's state, so run it after the demo, not before.
 
 The script verifies:
 
