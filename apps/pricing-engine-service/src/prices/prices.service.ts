@@ -37,9 +37,14 @@ export class PricesService implements OnModuleInit {
       await this.prisma.pricingRule.create({
         data: { ...DEFAULT_RULE, isActive: true },
       });
-      this.logger.log(
-        `Seeded default pricing rule: base=${DEFAULT_RULE.basePrice} min=${DEFAULT_RULE.minPrice} max=${DEFAULT_RULE.maxPrice} ${DEFAULT_RULE.currency}/kWh`,
-      );
+      this.logger.log({
+        event: 'pricing.rule.seeded',
+        message: 'Seeded the default pricing rule',
+        basePrice: DEFAULT_RULE.basePrice,
+        minPrice: DEFAULT_RULE.minPrice,
+        maxPrice: DEFAULT_RULE.maxPrice,
+        currency: DEFAULT_RULE.currency,
+      });
     }
   }
 
@@ -96,9 +101,14 @@ export class PricesService implements OnModuleInit {
       },
     });
 
-    this.logger.log(
-      `Price recalculated: supply=${dto.totalSupplyKwh} demand=${dto.totalDemandKwh} price=${price} ${rule.currency}`,
-    );
+    this.logger.log({
+      event: 'price.recalculated',
+      message: `Price recalculated: ${price} ${rule.currency}`,
+      supplyKwh: dto.totalSupplyKwh,
+      demandKwh: dto.totalDemandKwh,
+      pricePerKwh: price,
+      currency: rule.currency,
+    });
 
     return toPriceResponse(snapshot);
   }

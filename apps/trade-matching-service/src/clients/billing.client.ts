@@ -45,15 +45,15 @@ export class BillingClient {
     // Solar Grid service. The token is sent, never logged.
     this.internalToken = config.get<string>('INTERNAL_API_TOKEN');
     if (!this.internalToken) {
-      this.logger.warn('INTERNAL_API_TOKEN is not set: billing will refuse every trade.');
+      this.logger.warn({
+        event: 'config.warning',
+        message: 'INTERNAL_API_TOKEN is not set: billing will refuse every trade.',
+      });
     }
   }
 
   async createTrade(dto: CompletedTradeDto): Promise<CreateTradeResponse> {
     const url = `${this.baseUrl}/trades`;
-    this.logger.debug(
-      `Sending trade to billing: tradeId=${dto.tradeId} idempotencyKey=${dto.idempotencyKey} [cid=${dto.correlationId}]`,
-    );
 
     try {
       const response = await firstValueFrom(

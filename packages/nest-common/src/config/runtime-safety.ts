@@ -65,7 +65,7 @@ export function enforceOrWarn(
 ): void {
   if (problems.length === 0) return;
   if (environment === 'production') throw new UnsafeConfigurationError(problems);
-  for (const problem of problems) logger.warn(problem);
+  for (const problem of problems) logger.warn({ event: 'config.warning', message: problem });
 }
 
 export interface DatabaseRoleFacts {

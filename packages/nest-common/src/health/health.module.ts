@@ -134,13 +134,28 @@ export class HealthController {
       shuttingDown: this.lifecycle.shuttingDown,
       onFailure: (name, reason) => {
         failedNow.add(name);
-        if (!this.down.has(name)) this.logger.warn(`Dependency ${name} is down: ${reason}`);
+        if (!this.down.has(name)) {
+          this.logger.warn({
+            event: 'readiness.changed',
+            message: `Dependency ${name} is down`,
+            dependency: name,
+            status: 'down',
+            reason,
+          });
+        }
       },
     });
 
     if (report.status !== 'shutting_down') {
       for (const name of this.down) {
-        if (!failedNow.has(name)) this.logger.log(`Dependency ${name} is back up`);
+        if (!failedNow.has(name)) {
+          this.logger.log({
+            event: 'readiness.changed',
+            message: `Dependency ${name} is back up`,
+            dependency: name,
+            status: 'up',
+          });
+        }
       }
       this.down.clear();
       for (const name of failedNow) this.down.add(name);

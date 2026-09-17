@@ -190,6 +190,33 @@ describe('EnergyEventsConsumer', () => {
   });
 });
 
+describe('EnergyEventsConsumer correlation ids', () => {
+  it('carries the clean correlation id to the stored offer and the matching run', async () => {
+    const { consumer, mockPrisma, mockMatchingService } = buildMocks();
+
+    await consumer.handleEnergyEvent(
+      { ...surplusEvent, correlationId: '  cid-padded  ' },
+      delivery(),
+    );
+
+    expect(mockPrisma.sellOffer.create.mock.calls[0][0].data.correlationId).toBe('cid-padded');
+    // Billing validates the id strictly; the padded form would get the trade refused.
+    expect(mockMatchingService.runMatching).toHaveBeenCalledWith('cid-padded');
+  });
+
+  it('keeps the correlation id on a retried copy of the message', async () => {
+    const { consumer, mockPrisma, publish } = buildMocks();
+    mockPrisma.sellOffer.create.mockRejectedValueOnce(new Error('database is not available'));
+
+    await consumer.handleEnergyEvent({ ...surplusEvent, correlationId: ' cid-retry ' }, delivery());
+
+    const [, , body, options] = publish.mock.calls[0];
+    expect(body.correlationId).toBe('cid-retry');
+    expect(options.correlationId).toBe('cid-retry');
+    expect(options.headers['x-correlation-id']).toBe('cid-retry');
+  });
+});
+
 describe('retryCountOf', () => {
   it('reads the retry header, defaulting to zero', () => {
     expect(retryCountOf(delivery())).toBe(0);

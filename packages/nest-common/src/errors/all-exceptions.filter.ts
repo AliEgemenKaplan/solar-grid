@@ -9,6 +9,10 @@ import {
 import type { Request, Response } from 'express';
 import { HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
 import { ApiErrorCode, ApiErrorResponse, readCodedBody } from './api-error';
+import { isDatabaseUnavailable } from './dependency-errors';
+
+/** Told when a request failed because something it depends on did. */
+export type DependencyFailureListener = (dependency: 'database') => void;
 
 /**
  * Turns anything thrown into the one error body this system returns.
@@ -22,6 +26,8 @@ import { ApiErrorCode, ApiErrorResponse, readCodedBody } from './api-error';
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger('HttpException');
 
+  constructor(private readonly onDependencyFailure?: DependencyFailureListener) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     // Global filters also catch what a RabbitMQ handler throws. That error has
     // no HTTP response to become; it belongs to the consumer's retry and dead
@@ -33,34 +39,72 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
 
     const correlationId = readCorrelationId(request);
-    const body = this.toErrorBody(exception, request, correlationId);
+    const databaseUnavailable = isDatabaseUnavailable(exception);
+    const body = this.toErrorBody(exception, request, correlationId, databaseUnavailable);
 
-    if (body.statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    const fields = {
+      event: 'http.request.failed',
+      method: request.method,
+      // The path without its query string: a query can carry anything.
+      path: pathOf(request),
+      statusCode: body.statusCode,
+      errorCode: body.code,
+      correlationId,
+    };
+
+    if (databaseUnavailable) {
+      this.notifyDependencyFailure();
+      this.logger.error({
+        ...fields,
+        message: 'The database is unavailable',
+        dependency: 'database',
+        error: describeForLog(exception),
+      });
+    } else if (body.statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
       // The client is told nothing useful about this, so the log has to carry
-      // everything: the real error and where it came from.
-      this.logger.error(
-        `${request.method} ${request.url} failed: ${describe(exception)} [cid=${correlationId}]`,
-        exception instanceof Error ? exception.stack : undefined,
-      );
+      // everything: the real error, its stack and where it came from.
+      this.logger.error({
+        ...fields,
+        message: 'Request failed with an unexpected error',
+        error: exception instanceof Error ? exception : describeForLog(exception),
+      });
     } else {
-      this.logger.warn(
-        `${request.method} ${request.url} -> ${body.statusCode} ${body.code}: ${body.message} [cid=${correlationId}]`,
-      );
+      this.logger.warn({ ...fields, message: body.message });
     }
 
     response.status(body.statusCode).json(body);
+  }
+
+  private notifyDependencyFailure(): void {
+    try {
+      this.onDependencyFailure?.('database');
+    } catch {
+      // Counting a failure must not turn into a second one.
+    }
   }
 
   private toErrorBody(
     exception: unknown,
     request: Request,
     correlationId: string,
+    databaseUnavailable: boolean,
   ): ApiErrorResponse {
     const base = {
       correlationId,
       timestamp: new Date().toISOString(),
       path: request.url,
     };
+
+    if (databaseUnavailable) {
+      // The request was fine; the service cannot serve it right now. A 503
+      // tells the caller to try again, which a 500 does not.
+      return {
+        ...base,
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        code: ApiErrorCode.DOWNSTREAM_UNAVAILABLE,
+        message: 'The service cannot reach a dependency right now. Try again shortly.',
+      };
+    }
 
     if (exception instanceof HttpException) {
       const statusCode = exception.getStatus();
@@ -194,6 +238,19 @@ function mapPrismaError(
   }
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+function pathOf(request: Request): string {
+  const url = request.originalUrl ?? request.url ?? '';
+  const query = url.indexOf('?');
+  return query === -1 ? url : url.slice(0, query);
+}
+
+/** Enough to diagnose from the log: the error's type, code and message. */
+function describeForLog(error: unknown): Record<string, unknown> {
+  if (typeof error !== 'object' || error === null) return { message: String(error) };
+  const { name, code, message } = error as { name?: unknown; code?: unknown; message?: unknown };
+  return {
+    name: typeof name === 'string' ? name : 'Error',
+    ...(typeof code === 'string' ? { code } : {}),
+    message: typeof message === 'string' ? message.replace(/\s+/g, ' ').trim() : String(error),
+  };
 }

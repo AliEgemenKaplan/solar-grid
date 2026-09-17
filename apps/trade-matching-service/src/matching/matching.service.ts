@@ -73,11 +73,13 @@ export class MatchingService {
    * than charged again.
    */
   async runMatching(correlationId: string): Promise<MatchResult> {
+    const started = Date.now();
     const result: MatchResult = { matched: 0, failed: 0, skipped: 0, pending: 0, settled: 0 };
+    this.logger.log({ event: 'matching.started', message: 'Matching run started', correlationId });
 
     // Trades left unconfirmed by an earlier run hold energy and owe a ledger
     // entry, so they are retried before anything new is matched.
-    const settlement = await this.settlePendingTrades();
+    const settlement = await this.settlePendingTrades(correlationId);
     result.settled = settlement.settled;
     result.failed += settlement.failed;
     result.pending += settlement.stillPending;
@@ -94,9 +96,11 @@ export class MatchingService {
     ]);
 
     if (offers.length === 0 || requests.length === 0) {
-      this.logger.log(
-        `No matching candidates: ${offers.length} sellers, ${requests.length} buyers [cid=${correlationId}]`,
-      );
+      this.logCompleted(result, started, correlationId, {
+        reason: 'no-candidates',
+        openOffers: offers.length,
+        openRequests: requests.length,
+      });
       return result;
     }
 
@@ -104,17 +108,31 @@ export class MatchingService {
     result.skipped = plan.skippedSelfMatches;
 
     if (plan.trades.length === 0) {
-      this.logger.log(`Nothing to match [cid=${correlationId}]`);
+      this.logCompleted(result, started, correlationId, { reason: 'nothing-to-match' });
       return result;
     }
 
     let price;
+    const pricingStarted = Date.now();
     try {
       price = await this.pricingClient.getCurrentPrice(correlationId);
+      this.logger.log({
+        event: 'pricing.request.completed',
+        message: `Current price ${price.pricePerKwh} ${price.currency}/kWh`,
+        pricePerKwh: price.pricePerKwh,
+        currency: price.currency,
+        durationMs: Date.now() - pricingStarted,
+        correlationId,
+      });
     } catch (err) {
-      this.logger.error(
-        `Failed to fetch price, aborting matching: ${describe(err)} [cid=${correlationId}]`,
-      );
+      this.logger.error({
+        event: 'pricing.request.failed',
+        message: 'Could not fetch the current price; nothing was reserved',
+        dependency: 'pricing',
+        reason: describe(err),
+        durationMs: Date.now() - pricingStarted,
+        correlationId,
+      });
       throw new PricingUnavailableError(describe(err));
     }
 
@@ -122,9 +140,13 @@ export class MatchingService {
       const match = await this.reserve(planned, price, correlationId);
       if (!match) {
         // Another run reserved this energy between planning and reserving.
-        this.logger.debug(
-          `Skipped trade, energy no longer available: offer=${planned.offerId} request=${planned.requestId} [cid=${correlationId}]`,
-        );
+        this.logger.debug({
+          event: 'trade.reservation.skipped',
+          message: 'Energy no longer available by the time it was reserved',
+          offerId: planned.offerId,
+          requestId: planned.requestId,
+          correlationId,
+        });
         continue;
       }
 
@@ -134,10 +156,24 @@ export class MatchingService {
       else result.pending++;
     }
 
-    this.logger.log(
-      `Matching complete: ${result.matched} matched, ${result.failed} failed, ${result.skipped} skipped, ${result.pending} awaiting billing, ${result.settled} settled [cid=${correlationId}]`,
-    );
+    this.logCompleted(result, started, correlationId);
     return result;
+  }
+
+  private logCompleted(
+    result: MatchResult,
+    started: number,
+    correlationId: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    this.logger.log({
+      event: 'matching.completed',
+      message: `Matching run completed: ${result.matched} matched`,
+      ...result,
+      ...extra,
+      durationMs: Date.now() - started,
+      correlationId,
+    });
   }
 
   /**
@@ -203,9 +239,19 @@ export class MatchingService {
           },
         });
 
-        this.logger.log(
-          `Reserved trade: ${tradeId} seller=${planned.sellerHouseholdId} buyer=${planned.buyerHouseholdId} kwh=${planned.energyKwh} total=${totalAmount} ${price.currency} [cid=${correlationId}]`,
-        );
+        this.logger.log({
+          event: 'trade.reserved',
+          message: 'Energy reserved on both sides; billing next',
+          tradeId,
+          offerId: planned.offerId,
+          requestId: planned.requestId,
+          sellerHouseholdId: planned.sellerHouseholdId,
+          buyerHouseholdId: planned.buyerHouseholdId,
+          energyKwh: planned.energyKwh,
+          totalAmount,
+          currency: price.currency,
+          correlationId,
+        });
         return match;
       });
     } catch (err) {
@@ -219,6 +265,19 @@ export class MatchingService {
     await this.prisma.tradeMatch.update({
       where: { id: match.id },
       data: { billingAttempts: { increment: 1 } },
+    });
+
+    const billingStarted = Date.now();
+    const billingFields = {
+      tradeId: match.tradeId,
+      idempotencyKey: match.idempotencyKey,
+      billingAttempt: match.billingAttempts + 1,
+      correlationId: match.correlationId,
+    };
+    this.logger.debug({
+      event: 'billing.request.started',
+      message: 'Sending trade to billing',
+      ...billingFields,
     });
 
     try {
@@ -246,19 +305,33 @@ export class MatchingService {
         },
       });
 
-      const recognised = response.duplicate ? ' (billing had already recorded it)' : '';
-      this.logger.log(
-        `Trade COMPLETED: ${match.tradeId} kwh=${match.energyKwh} total=${match.totalAmount} ${match.currency}${recognised} [cid=${match.correlationId}]`,
-      );
+      this.logger.log({
+        event: 'trade.settled',
+        message: response.duplicate
+          ? 'Trade completed; billing had already recorded it'
+          : 'Trade completed and recorded by billing',
+        billingDuplicate: response.duplicate === true,
+        energyKwh: formatEnergy(match.energyKwh),
+        totalAmount: formatMoney(match.totalAmount),
+        currency: match.currency,
+        durationMs: Date.now() - billingStarted,
+        ...billingFields,
+      });
       return 'completed';
     } catch (err) {
       const reason = describe(err);
 
       if (err instanceof BillingRejectedError) {
         await this.releaseReservation(match, reason);
-        this.logger.error(
-          `Trade REJECTED by billing, energy released: ${match.tradeId} reason=${reason} [cid=${match.correlationId}]`,
-        );
+        this.logger.error({
+          event: 'trade.failed',
+          message: 'Billing refused the trade; the energy was released',
+          dependency: 'billing',
+          status: err.status,
+          reason,
+          durationMs: Date.now() - billingStarted,
+          ...billingFields,
+        });
         return 'failed';
       }
 
@@ -268,15 +341,21 @@ export class MatchingService {
         where: { id: match.id },
         data: { failureReason: reason },
       });
-      this.logger.warn(
-        `Trade billing outcome unknown, staying reserved for retry: ${match.tradeId} reason=${reason} [cid=${match.correlationId}]`,
-      );
+      this.logger.warn({
+        event: 'billing.request.failed',
+        message: 'Billing did not answer; the trade stays reserved for the next run',
+        dependency: 'billing',
+        outcome: 'pending',
+        reason,
+        durationMs: Date.now() - billingStarted,
+        ...billingFields,
+      });
       return 'pending';
     }
   }
 
   /** Retries trades that were reserved but never got an answer from billing. */
-  private async settlePendingTrades(): Promise<{
+  private async settlePendingTrades(correlationId: string): Promise<{
     settled: number;
     failed: number;
     stillPending: number;
@@ -304,9 +383,15 @@ export class MatchingService {
     }
 
     if (settled > 0 || failed > 0) {
-      this.logger.log(
-        `Settled ${settled} and released ${failed} trade(s) left over from earlier runs`,
-      );
+      // Each settled trade logged under its own correlation id; this line
+      // belongs to the run that settled them.
+      this.logger.log({
+        event: 'settlement.completed',
+        message: 'Settled trades left over from earlier runs',
+        settled,
+        failed,
+        correlationId,
+      });
     }
     return { settled, failed, stillPending: 0 };
   }

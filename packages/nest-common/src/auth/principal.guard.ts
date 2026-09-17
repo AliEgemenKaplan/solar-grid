@@ -11,6 +11,7 @@ import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiForbiddenResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { HEADER_CORRELATION_ID } from '@solar-grid/shared-contracts';
 import {
   ApiErrorResponse,
   NotPermittedException,
@@ -72,19 +73,40 @@ export class PrincipalGuard implements CanActivate {
     const principal = this.verifier.identify(token);
     if (!principal) {
       // The token itself is never logged, not even partially.
-      this.logger.warn(`Rejected unrecognised credentials for ${request.method} ${request.url}`);
+      this.logger.warn({
+        event: 'auth.rejected',
+        message: 'Rejected unrecognised credentials',
+        reason: 'unrecognised',
+        required,
+        ...requestFields(request),
+      });
       throw new UnauthenticatedException('The credentials presented are not recognised.');
     }
 
     if (principal !== required) {
-      this.logger.warn(
-        `Rejected ${principal} credentials for ${request.method} ${request.url}, which requires ${required}`,
-      );
+      this.logger.warn({
+        event: 'auth.rejected',
+        message: 'Rejected credentials for a different role',
+        reason: 'wrong-role',
+        presented: principal,
+        required,
+        ...requestFields(request),
+      });
       throw new NotPermittedException(`This endpoint requires ${required} credentials.`);
     }
 
     return true;
   }
+}
+
+function requestFields(request: Request) {
+  const url = request.originalUrl ?? request.url ?? '';
+  const correlationId = request.headers[HEADER_CORRELATION_ID];
+  return {
+    method: request.method,
+    path: url.split('?')[0],
+    correlationId: typeof correlationId === 'string' ? correlationId : undefined,
+  };
 }
 
 function requires(kind: PrincipalKind, scheme: string) {

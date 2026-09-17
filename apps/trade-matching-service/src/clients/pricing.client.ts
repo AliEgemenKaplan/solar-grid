@@ -18,7 +18,11 @@ export class PricingClient {
 
   async getCurrentPrice(correlationId?: string): Promise<PriceResponseDto> {
     const url = `${this.baseUrl}/prices/current`;
-    this.logger.debug(`Fetching current price from ${url}`);
+    this.logger.debug({
+      event: 'pricing.request.started',
+      message: 'Fetching the current price',
+      correlationId,
+    });
     const response = await firstValueFrom(
       this.httpService.get<PriceResponseDto>(url, {
         headers: correlationId ? { [HEADER_CORRELATION_ID]: correlationId } : undefined,

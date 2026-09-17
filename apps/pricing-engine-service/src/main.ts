@@ -1,10 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
-import { configureHttpApp, installGracefulShutdown } from '@solar-grid/nest-common';
+import {
+  configureHttpApp,
+  createServiceLogger,
+  installGracefulShutdown,
+} from '@solar-grid/nest-common';
 import { AppModule } from './app.module';
 
+// One structured logger for the whole process, Nest's own output included:
+// JSON lines in production, readable lines in development, secrets redacted.
+const serviceLogger = createServiceLogger('pricing-engine-service');
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, { logger: serviceLogger });
   const logger = new Logger('Bootstrap');
 
   // Correlation ids, security headers, CORS, validation, the error contract
@@ -22,16 +30,23 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3002;
   await app.listen(port);
-  logger.log(`Pricing Engine Service running on port ${port}`);
-  if (swaggerEnabled) {
-    logger.log(`Swagger UI available at http://localhost:${port}/api`);
-  }
+  logger.log({
+    event: 'service.started',
+    message: `Pricing Engine Service running on port ${port}`,
+    port: Number(port),
+    swaggerEnabled,
+  });
 }
 
 bootstrap().catch((err: unknown) => {
   // Anything that stops startup - an unsafe configuration, an unreachable
   // database - ends the process with its reason and a non-zero status.
-  Logger.flush();
-  new Logger('Bootstrap').error(err instanceof Error ? err.message : String(err));
+  serviceLogger.error(
+    {
+      event: 'service.start_failed',
+      message: err instanceof Error ? err.message : String(err),
+    },
+    'Bootstrap',
+  );
   process.exit(1);
 });

@@ -44,9 +44,17 @@ export class TradesService {
     const replay = await this.findReplay(dto, fingerprint);
     if (replay) return { trade: replay, created: false };
 
-    this.logger.log(
-      `Recording trade: tradeId=${dto.tradeId} seller=${dto.sellerHouseholdId} buyer=${dto.buyerHouseholdId} amount=${dto.totalAmount} ${dto.currency} [cid=${dto.correlationId}]`,
-    );
+    this.logger.log({
+      event: 'trade.recording',
+      message: 'Recording trade',
+      tradeId: dto.tradeId,
+      idempotencyKey: dto.idempotencyKey,
+      sellerHouseholdId: dto.sellerHouseholdId,
+      buyerHouseholdId: dto.buyerHouseholdId,
+      totalAmount: dto.totalAmount,
+      currency: dto.currency,
+      correlationId: dto.correlationId,
+    });
 
     try {
       const trade = await this.prisma.$transaction(async (tx) => {
@@ -122,9 +130,14 @@ export class TradesService {
         return completedTrade;
       });
 
-      this.logger.log(
-        `Trade recorded: tradeId=${dto.tradeId} seller+${dto.totalAmount} buyer-${dto.totalAmount} [cid=${dto.correlationId}]`,
-      );
+      this.logger.log({
+        event: 'trade.recorded',
+        message: 'Trade recorded: seller credited, buyer debited',
+        tradeId: dto.tradeId,
+        totalAmount: dto.totalAmount,
+        currency: dto.currency,
+        correlationId: dto.correlationId,
+      });
       return { trade: toTradeResponse(trade, false), created: true };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
@@ -213,18 +226,27 @@ export class TradesService {
     // and is treated as a match rather than breaking old retries.
     if (existing.requestHash && existing.requestHash !== fingerprint) {
       const fields = differingFields(existing.trade, dto);
-      this.logger.warn(
-        `Idempotency conflict: key=${dto.idempotencyKey} differs in ${fields.join(', ') || 'payload'} [cid=${dto.correlationId}]`,
-      );
+      this.logger.warn({
+        event: 'trade.idempotency_conflict',
+        message: 'Idempotency key reused for a different trade',
+        idempotencyKey: dto.idempotencyKey,
+        tradeId: dto.tradeId,
+        differingFields: fields,
+        correlationId: dto.correlationId,
+      });
       throw new IdempotencyConflictException(
         'This idempotency key was already used for a different trade.',
         fields.map((field) => `${field} differs from the recorded trade`),
       );
     }
 
-    this.logger.warn(
-      `Duplicate trade request answered from the ledger: key=${dto.idempotencyKey} tradeId=${existing.tradeId} [cid=${dto.correlationId}]`,
-    );
+    this.logger.log({
+      event: 'trade.replayed',
+      message: 'Repeated trade answered from the ledger',
+      idempotencyKey: dto.idempotencyKey,
+      tradeId: existing.tradeId,
+      correlationId: dto.correlationId,
+    });
     return toTradeResponse(existing.trade, true);
   }
 }

@@ -10,6 +10,7 @@ import { ApiErrorResponse } from '../errors/api-error';
 import { CredentialVerifier, PrincipalKind } from '../auth/credentials';
 import { INTERNAL_SERVICE_AUTH_SCHEME, OPERATOR_AUTH_SCHEME } from '../auth/principal.guard';
 import { connectionUrlProblems, enforceOrWarn } from '../config/runtime-safety';
+import { observeRequests } from './request-observation';
 
 export interface HttpAppOptions {
   title: string;
@@ -73,6 +74,9 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
     next();
   });
 
+  // After the correlation id is settled, so every request line carries it.
+  app.use(observeRequests());
+
   // Swagger UI needs inline scripts and styles; a JSON API does not. The
   // content security policy is only relaxed when the UI is actually served.
   app.use(helmet({ contentSecurityPolicy: swaggerEnabled ? false : undefined }));
@@ -88,9 +92,10 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
     });
   }
   if ((config.get<string>('CORS_ALLOWED_ORIGINS') ?? '').split(',').some((o) => o.trim() === '*')) {
-    logger.warn(
-      'CORS_ALLOWED_ORIGINS contains "*", which is ignored: list the origins explicitly.',
-    );
+    logger.warn({
+      event: 'config.warning',
+      message: 'CORS_ALLOWED_ORIGINS contains "*", which is ignored: list the origins explicitly.',
+    });
   }
 
   app.useGlobalPipes(
@@ -145,13 +150,16 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
     SwaggerModule.setup('api', app, document);
   }
 
-  logger.log(
-    `Swagger ${swaggerEnabled ? 'enabled at /api' : 'disabled'}; CORS ${
+  logger.log({
+    event: 'http.platform.configured',
+    message: `Swagger ${swaggerEnabled ? 'enabled at /api' : 'disabled'}; CORS ${
       corsOrigins.length > 0
         ? `allowed for ${corsOrigins.join(', ')}`
         : 'disabled (same origin only)'
     }`,
-  );
+    swaggerEnabled,
+    corsOrigins,
+  });
 
   return { swaggerEnabled, corsOrigins };
 }

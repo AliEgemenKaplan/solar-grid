@@ -118,15 +118,26 @@ export class ReadingsService {
       where: { householdId_timestamp: { householdId: dto.householdId, timestamp } },
     });
     if (existing) {
-      this.logger.warn(
-        `Duplicate reading ignored: household=${dto.householdId} timestamp=${dto.timestamp} [cid=${correlationId}]`,
-      );
+      // A client retry, answered from what was stored the first time.
+      this.logger.log({
+        event: 'reading.duplicate',
+        message: 'Duplicate reading answered from the stored one',
+        householdId: dto.householdId,
+        timestamp: dto.timestamp,
+        correlationId,
+      });
       return toReadingResponse(existing, surplusKwh, demandKwh, true);
     }
 
-    this.logger.log(
-      `Processing reading for ${dto.householdId}: net=${netKwh} kWh, status=${status} [cid=${correlationId}]`,
-    );
+    this.logger.log({
+      event: 'reading.received',
+      message: `Reading for ${dto.householdId}: ${status}`,
+      householdId: dto.householdId,
+      status,
+      netKwh,
+      timestamp: dto.timestamp,
+      correlationId,
+    });
 
     try {
       const { reading, outboxRecord } = await this.prisma.$transaction(async (tx) => {
@@ -178,9 +189,15 @@ export class ReadingsService {
       });
 
       if (outboxRecord) {
-        this.logger.log(
-          `Queued ${outboxRecord.eventType} for ${dto.householdId}: eventId=${outboxRecord.eventId} [cid=${correlationId}]`,
-        );
+        this.logger.log({
+          event: 'outbox.event.created',
+          message: `Queued ${outboxRecord.eventType} for ${dto.householdId}`,
+          eventId: outboxRecord.eventId,
+          eventType: outboxRecord.eventType,
+          sourceEventId: reading.id,
+          householdId: dto.householdId,
+          correlationId,
+        });
         // Publish now rather than waiting for the next poll. The poller is the
         // backstop if this fails, so the result is deliberately not awaited.
         void this.outbox.drain().catch(() => undefined);
@@ -194,9 +211,14 @@ export class ReadingsService {
           where: { householdId_timestamp: { householdId: dto.householdId, timestamp } },
         });
         if (winner) {
-          this.logger.warn(
-            `Concurrent duplicate reading ignored: household=${dto.householdId} timestamp=${dto.timestamp} [cid=${correlationId}]`,
-          );
+          this.logger.log({
+            event: 'reading.duplicate',
+            message: 'Concurrent duplicate reading answered from the stored one',
+            householdId: dto.householdId,
+            timestamp: dto.timestamp,
+            concurrent: true,
+            correlationId,
+          });
           return toReadingResponse(winner, surplusKwh, demandKwh, true);
         }
       }

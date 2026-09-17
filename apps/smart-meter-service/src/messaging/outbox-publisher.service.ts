@@ -72,9 +72,13 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
       channel.on('return', (message: ConsumeMessage) => {
         const messageId = message.properties.messageId as string | undefined;
         if (messageId) this.returned.add(messageId);
-        this.logger.error(
-          `Broker returned an unroutable message: eventId=${messageId ?? 'unknown'} routingKey=${message.fields.routingKey}`,
-        );
+        this.logger.error({
+          event: 'outbox.publish.unroutable',
+          message: 'The broker returned a message no queue is bound for',
+          eventId: messageId ?? 'unknown',
+          routingKey: message.fields.routingKey,
+          correlationId: message.properties.correlationId as string | undefined,
+        });
       });
     });
 
@@ -94,7 +98,10 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     if (this.inProgress) {
-      this.logger.log('Waiting for the outbox publish in progress before shutting down');
+      this.logger.log({
+        event: 'shutdown.outbox.waiting',
+        message: 'Waiting for the outbox publish in progress before shutting down',
+      });
       await this.inProgress;
     }
   }
@@ -136,7 +143,11 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
       }
       return published;
     } catch (err) {
-      this.logger.error(`Outbox drain failed: ${describe(err)}`);
+      this.logger.error({
+        event: 'outbox.drain.failed',
+        message: `Outbox drain failed: ${describe(err)}`,
+        error: err,
+      });
       return 0;
     }
   }
@@ -177,9 +188,15 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
         data: { status: 'PUBLISHED', publishedAt: new Date() },
       });
 
-      this.logger.log(
-        `Published ${event.eventType}: eventId=${event.eventId} sourceEventId=${String(envelope.sourceEventId ?? '-')} [cid=${event.correlationId}]`,
-      );
+      this.logger.log({
+        event: 'outbox.event.published',
+        message: `Published ${event.eventType}`,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        sourceEventId: envelope.sourceEventId,
+        attempts: event.attempts + 1,
+        correlationId: event.correlationId,
+      });
       return null;
     } catch (err) {
       await this.recordFailure(event, describe(err));
@@ -192,9 +209,15 @@ export class OutboxPublisherService implements OnModuleInit, BeforeApplicationSh
       where: { id: event.id },
       data: { attempts: { increment: 1 }, lastError: reason },
     });
-    this.logger.warn(
-      `Outbox publish failed, event stays pending: eventId=${event.eventId} attempts=${event.attempts + 1} reason=${reason} [cid=${event.correlationId}]`,
-    );
+    this.logger.warn({
+      event: 'outbox.publish.failed',
+      message: 'Outbox publish failed; the event stays pending',
+      eventId: event.eventId,
+      eventType: event.eventType,
+      attempts: event.attempts + 1,
+      reason,
+      correlationId: event.correlationId,
+    });
   }
 
   /**

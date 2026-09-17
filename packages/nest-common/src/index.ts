@@ -12,3 +12,6 @@ export * from './health/readiness';
 export * from './health/health.module';
 export * from './lifecycle/graceful-shutdown';
 export * from './config/runtime-safety';
+export * from './errors/dependency-errors';
+export * from './logging/structured-logger';
+export * from './http/request-observation';

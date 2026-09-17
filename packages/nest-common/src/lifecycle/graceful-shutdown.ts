@@ -53,19 +53,30 @@ export function installGracefulShutdown(
   async function shutdown(signal: string): Promise<void> {
     if (inProgress) {
       // A second Ctrl+C means the person at the terminal does not want to wait.
-      logger.warn(`Received ${signal} again during shutdown; exiting immediately`);
+      logger.warn({
+        event: 'shutdown.forced',
+        message: `Received ${signal} again during shutdown; exiting immediately`,
+        signal,
+      });
       exit(1);
       return;
     }
     inProgress = true;
 
     const started = Date.now();
-    logger.log(`Received ${signal}; shutting down (deadline ${timeoutMs}ms)`);
+    logger.log({
+      event: 'shutdown.started',
+      message: `Received ${signal}; shutting down`,
+      signal,
+      deadlineMs: timeoutMs,
+    });
 
     const deadline = setTimeout(() => {
-      logger.error(
-        `Shutdown did not finish within ${timeoutMs}ms; exiting without waiting further`,
-      );
+      logger.error({
+        event: 'shutdown.timed_out',
+        message: `Shutdown did not finish within ${timeoutMs}ms; exiting without waiting further`,
+        deadlineMs: timeoutMs,
+      });
       exit(1);
     }, timeoutMs);
     deadline.unref();
@@ -73,11 +84,19 @@ export function installGracefulShutdown(
     try {
       await app.close();
       clearTimeout(deadline);
-      logger.log(`Shutdown complete in ${Date.now() - started}ms`);
+      logger.log({
+        event: 'shutdown.completed',
+        message: 'Shutdown complete',
+        durationMs: Date.now() - started,
+      });
       exit(0);
     } catch (err) {
       clearTimeout(deadline);
-      logger.error(`Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error({
+        event: 'shutdown.failed',
+        message: `Shutdown failed: ${err instanceof Error ? err.message : String(err)}`,
+        durationMs: Date.now() - started,
+      });
       exit(1);
     }
   }

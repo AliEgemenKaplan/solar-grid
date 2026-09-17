@@ -50,7 +50,12 @@ describe('installGracefulShutdown', () => {
     await handle.shutdown('SIGTERM');
 
     expect(exit).toHaveBeenCalledWith(1);
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('stuck'));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'shutdown.failed',
+        message: expect.stringContaining('stuck'),
+      }),
+    );
   });
 
   it('gives up after the deadline instead of hanging forever', async () => {

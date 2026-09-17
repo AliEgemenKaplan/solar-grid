@@ -62,16 +62,28 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       } catch (err) {
         // The library keeps consumers from before a reconnect, whose channel is
         // gone; a closed channel delivers nothing, so there is nothing to stop.
-        this.logger.log(`Consumer ${tag} was already closed (${describe(err)})`);
+        this.logger.log({
+          event: 'shutdown.consumer.already_closed',
+          message: `Consumer ${tag} was already closed`,
+          consumerTag: tag,
+          reason: describe(err),
+        });
       }
     }
 
     const inFlight = deliveriesInProgress(this.amqp);
     if (inFlight.length > 0) {
-      this.logger.log(`Stopped consuming; waiting for ${inFlight.length} message(s) in progress`);
+      this.logger.log({
+        event: 'shutdown.consumer.draining',
+        message: 'Stopped consuming; waiting for messages in progress',
+        inFlight: inFlight.length,
+      });
       await Promise.allSettled(inFlight);
     }
-    this.logger.log('Energy event consumer stopped');
+    this.logger.log({
+      event: 'shutdown.consumer.stopped',
+      message: 'Energy event consumer stopped',
+    });
   }
 
   @RabbitSubscribe({
@@ -95,19 +107,32 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
     },
     errorBehavior: MessageHandlerErrorBehavior.NACK,
   })
-  async handleEnergyEvent(event: EnergyEvent, amqpMsg: ConsumeMessage): Promise<void> {
+  async handleEnergyEvent(received: EnergyEvent, amqpMsg: ConsumeMessage): Promise<void> {
+    const started = Date.now();
     const attempt = retryCountOf(amqpMsg) + 1;
-    const context = describeEvent(event, attempt, this.retryConfig.maxRetries);
 
-    const problem = validateEnergyEvent(event);
+    const problem = validateEnergyEvent(received);
     if (problem) {
       // No number of retries turns a malformed message into a valid one.
-      this.logger.error(`Unprocessable energy event (${problem}) ${context}`);
-      await this.parkInDeadLetterQueue(event, amqpMsg, `unprocessable: ${problem}`, attempt);
+      await this.parkInDeadLetterQueue(received, amqpMsg, `unprocessable: ${problem}`, attempt);
       return;
     }
 
-    this.logger.log(`Received ${event.eventType} ${context}`);
+    // Validation accepts a correlation id with stray whitespace around it;
+    // everything downstream - rows, logs, the call to billing - gets the clean
+    // value, or billing would refuse the trade over it.
+    const event = {
+      ...received,
+      correlationId: normalizeCorrelationId(received.correlationId) as string,
+    };
+    const fields = eventFields(event, attempt, this.retryConfig.maxRetries);
+
+    this.logger.log({
+      event: 'message.consumed',
+      message: `Received ${event.eventType}`,
+      redelivered: amqpMsg?.fields?.redelivered === true,
+      ...fields,
+    });
 
     try {
       const created =
@@ -122,16 +147,22 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       if (created || attempt > 1) {
         await this.matchingService.runMatching(event.correlationId);
       }
+
+      this.logger.log({
+        event: 'message.processed',
+        message: `Processed ${event.eventType}`,
+        outcome: created ? 'created' : 'duplicate',
+        durationMs: Date.now() - started,
+        ...fields,
+      });
     } catch (err) {
       const reason = describe(err);
 
       if (attempt > this.retryConfig.maxRetries) {
-        this.logger.error(`Giving up on ${event.eventType}: ${reason} ${context}`);
         await this.parkInDeadLetterQueue(event, amqpMsg, reason, attempt);
         return;
       }
 
-      this.logger.warn(`Retrying ${event.eventType} after failure: ${reason} ${context}`);
       await this.scheduleRetry(event, amqpMsg, reason, attempt);
     }
   }
@@ -166,9 +197,15 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       },
     });
 
-    this.logger.log(
-      `Scheduled retry ${attempt}/${this.retryConfig.maxRetries} in ${retryDelayMs(attempt, this.retryConfig.baseDelayMs)}ms: eventId=${event.eventId} [cid=${event.correlationId}]`,
-    );
+    this.logger.warn({
+      event: 'message.retry.scheduled',
+      message: `Retry ${attempt} of ${this.retryConfig.maxRetries} scheduled after a failure`,
+      retry: attempt,
+      maxRetries: this.retryConfig.maxRetries,
+      delayMs: retryDelayMs(attempt, this.retryConfig.baseDelayMs),
+      reason,
+      ...eventFields(event, attempt, this.retryConfig.maxRetries),
+    });
   }
 
   /**
@@ -195,9 +232,13 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       },
     });
 
-    this.logger.error(
-      `Parked in the dead letter queue after ${attempt - 1} retries: eventId=${String(event?.eventId)} reason=${reason}`,
-    );
+    this.logger.error({
+      event: 'message.dead_lettered',
+      message: `Parked in the dead letter queue after ${attempt - 1} retries`,
+      retries: attempt - 1,
+      reason,
+      ...eventFields(event, attempt, this.retryConfig.maxRetries),
+    });
   }
 
   private async handleSurplus(event: EnergySurplusDetectedEvent): Promise<boolean> {
@@ -217,17 +258,25 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       // idempotent: checking first would still leave a gap between the check
       // and the insert when the same event is delivered twice at once.
       if (isDuplicateEvent(err)) {
-        this.logger.warn(
-          `Duplicate surplus event skipped: eventId=${event.eventId} [cid=${event.correlationId}]`,
-        );
+        this.logger.log({
+          event: 'message.duplicate',
+          message: 'Surplus event already recorded as an offer',
+          eventId: event.eventId,
+          correlationId: event.correlationId,
+        });
         return false;
       }
       throw err;
     }
 
-    this.logger.log(
-      `Created sell offer: eventId=${event.eventId} household=${event.householdId} kwh=${event.surplusKwh} [cid=${event.correlationId}]`,
-    );
+    this.logger.log({
+      event: 'offer.created',
+      message: 'Created sell offer',
+      eventId: event.eventId,
+      householdId: event.householdId,
+      energyKwh: event.surplusKwh,
+      correlationId: event.correlationId,
+    });
     return true;
   }
 
@@ -245,17 +294,25 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
       });
     } catch (err) {
       if (isDuplicateEvent(err)) {
-        this.logger.warn(
-          `Duplicate demand event skipped: eventId=${event.eventId} [cid=${event.correlationId}]`,
-        );
+        this.logger.log({
+          event: 'message.duplicate',
+          message: 'Demand event already recorded as a request',
+          eventId: event.eventId,
+          correlationId: event.correlationId,
+        });
         return false;
       }
       throw err;
     }
 
-    this.logger.log(
-      `Created buy request: eventId=${event.eventId} household=${event.householdId} kwh=${event.demandKwh} [cid=${event.correlationId}]`,
-    );
+    this.logger.log({
+      event: 'request.created',
+      message: 'Created buy request',
+      eventId: event.eventId,
+      householdId: event.householdId,
+      energyKwh: event.demandKwh,
+      correlationId: event.correlationId,
+    });
     return true;
   }
 }
@@ -320,9 +377,24 @@ function originalRoutingKeyOf(amqpMsg?: ConsumeMessage): string {
   return amqpMsg?.fields?.routingKey ?? 'unknown';
 }
 
-/** One log-friendly string with everything needed to trace a message. */
-function describeEvent(event: EnergyEvent, attempt: number, maxRetries: number): string {
-  return `eventId=${String(event?.eventId)} type=${String(event?.eventType)} sourceEventId=${String(event?.sourceEventId ?? '-')} attempt=${attempt}/${maxRetries + 1} [cid=${String(event?.correlationId)}]`;
+/**
+ * The fields that identify a message in every log line about it. A malformed
+ * message can carry anything, so only strings are passed on.
+ */
+function eventFields(event: unknown, attempt: number, maxRetries: number) {
+  const candidate = (typeof event === 'object' && event !== null ? event : {}) as Record<
+    string,
+    unknown
+  >;
+  const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
+  return {
+    eventId: text(candidate.eventId),
+    eventType: text(candidate.eventType),
+    sourceEventId: text(candidate.sourceEventId),
+    attempt,
+    maxAttempts: maxRetries + 1,
+    correlationId: normalizeCorrelationId(candidate.correlationId) ?? undefined,
+  };
 }
 
 function isNonEmptyString(value: unknown): value is string {
