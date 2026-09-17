@@ -21,7 +21,8 @@
     "prisma:generate": "pnpm -r --workspace-concurrency=1 --filter \"./apps/*\" run prisma:generate",
     "prisma:deploy": "pnpm -r --workspace-concurrency=1 --filter \"./apps/*\" prisma:deploy",
     "demo:sh": "bash scripts/demo.sh",
-    "demo:ps": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1"
+    "demo:ps": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1",
+    "resilience:sh": "bash scripts/resilience.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
