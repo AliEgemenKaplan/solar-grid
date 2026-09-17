@@ -29,8 +29,18 @@ export interface RuntimeDatabase {
  * created by the same init script, then migrations and runtime grants applied
  * as the owner - the job the migration container does.
  */
-export async function startRuntimeDatabase(): Promise<RuntimeDatabase> {
-  const container = await new PostgreSqlContainer('postgres:15-alpine')
+export async function startRuntimeDatabase(
+  options: {
+    /**
+     * Bind the database to this host port, so it can be stopped and started
+     * without the service under test losing its address.
+     */
+    hostPort?: number;
+  } = {},
+): Promise<RuntimeDatabase> {
+  const base = new PostgreSqlContainer('postgres:15-alpine');
+  if (options.hostPort) base.withExposedPorts({ container: 5432, host: options.hostPort });
+  const container = await base
     .withUsername('solargrid_owner')
     .withPassword(OWNER_PASSWORD)
     .withEnvironment({ APP_DB_PASSWORD: RUNTIME_PASSWORD })
