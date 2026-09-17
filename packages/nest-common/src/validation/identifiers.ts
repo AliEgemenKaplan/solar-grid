@@ -48,3 +48,20 @@ export function CorrelationIdFilter() {
     }),
   );
 }
+
+/** An optional household filter for list and statistics endpoints. */
+export function HouseholdIdFilter(description = 'Only include this household') {
+  return applyDecorators(
+    ApiPropertyOptional({
+      description,
+      example: 'HH-SELLER-001',
+      pattern: SAFE_IDENTIFIER_PATTERN.source,
+      maxLength: 64,
+    }),
+    IsOptional(),
+    IsString(),
+    Matches(SAFE_IDENTIFIER_PATTERN, {
+      message: 'householdId must be 1-64 characters of letters, digits, ".", "_", ":" or "-"',
+    }),
+  );
+}

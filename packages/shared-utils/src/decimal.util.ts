@@ -53,3 +53,22 @@ export function isDecimalWithin(
   }
   return parsed.isFinite() && parsed.gte(min) && parsed.lte(max);
 }
+
+/**
+ * `dividend / divisor`, rounded once to the given scale, or null when the
+ * divisor is zero.
+ *
+ * Statistics such as a volume weighted price divide one exact sum by another.
+ * Doing it here, in decimal arithmetic, keeps the answer away from binary
+ * floating point, and returning null rather than zero keeps "no trades yet"
+ * from looking like "the price was nothing".
+ */
+export function divideDecimal(
+  dividend: DecimalLike,
+  divisor: DecimalLike,
+  scale: number,
+): string | null {
+  const bottom = new Decimal(String(divisor));
+  if (bottom.isZero() || !bottom.isFinite()) return null;
+  return new Decimal(String(dividend)).div(bottom).toFixed(scale, Decimal.ROUND_HALF_UP);
+}
