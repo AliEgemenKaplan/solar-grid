@@ -1,11 +1,7 @@
 import { BeforeApplicationShutdown, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  AmqpConnection,
-  MessageHandlerErrorBehavior,
-  RabbitSubscribe,
-} from '@golevelup/nestjs-rabbitmq';
-import type { ConsumeMessage } from 'amqplib';
+import { AmqpConnection, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
+import type { Channel, ConsumeMessage } from 'amqplib';
 import {
   ENERGY_EVENT_VERSION,
   EnergyDemandDetectedEvent,
@@ -108,7 +104,7 @@ export class EnergyEventsConsumer implements BeforeApplicationShutdown {
         'x-dead-letter-routing-key': ROUTING_KEY_DLQ,
       },
     },
-    errorBehavior: MessageHandlerErrorBehavior.NACK,
+    errorHandler: nackUnlessChannelClosed,
   })
   async handleEnergyEvent(received: EnergyEvent, amqpMsg: ConsumeMessage): Promise<void> {
     const started = Date.now();
@@ -357,6 +353,39 @@ export function validateEnergyEvent(event: unknown): string | null {
   }
 
   return `unknown eventType: ${String(candidate.eventType)}`;
+}
+
+const consumerLogger = new Logger(EnergyEventsConsumer.name);
+
+/**
+ * The library calls this for a message whose handling threw or whose
+ * acknowledgement failed: nack it without requeueing, so the queue's dead
+ * letter route catches it.
+ *
+ * Except when the channel is already closed - the broker connection dropped
+ * while the message was being handled. The library's own handler throws
+ * again then, and that rejection is unhandled: it would bring the whole
+ * process down over a network blip. There is nothing to nack on a closed
+ * channel anyway: the broker has already put the unacknowledged message back
+ * and will deliver it again, where the unique event id makes it harmless.
+ */
+export function nackUnlessChannelClosed(
+  channel: Channel,
+  msg: ConsumeMessage,
+  error: unknown,
+): void {
+  try {
+    channel.nack(msg, false, false);
+  } catch {
+    consumerLogger.warn({
+      event: 'message.ack_lost',
+      message:
+        'The channel closed before the message could be settled; the broker will deliver it again',
+      eventId: msg?.properties?.messageId,
+      correlationId: msg?.properties?.correlationId,
+      reason: describe(error),
+    });
+  }
 }
 
 /**

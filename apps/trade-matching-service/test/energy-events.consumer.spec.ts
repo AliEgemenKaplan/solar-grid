@@ -13,6 +13,7 @@ import {
 } from '@solar-grid/shared-contracts';
 import {
   EnergyEventsConsumer,
+  nackUnlessChannelClosed,
   retryCountOf,
   validateEnergyEvent,
 } from '../src/messaging/energy-events.consumer';
@@ -262,6 +263,29 @@ describe('EnergyEventsConsumer metrics', () => {
     expect(count('EnergyDemandDetected', 'retry_scheduled')).toBe(1);
     expect(count('EnergyDemandDetected', 'dead_lettered')).toBe(1);
     expect(count('EnergySurplusDetected', 'rejected')).toBe(1);
+  });
+});
+
+describe('nackUnlessChannelClosed', () => {
+  it('nacks without requeueing, so the dead letter route catches the message', () => {
+    const channel = { nack: jest.fn() };
+    const message = delivery();
+
+    nackUnlessChannelClosed(channel as any, message, new Error('handler failed'));
+
+    expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+  });
+
+  it('does not throw when the channel has already closed', () => {
+    const channel = {
+      nack: jest.fn(() => {
+        throw new Error('Channel closed');
+      }),
+    };
+
+    expect(() =>
+      nackUnlessChannelClosed(channel as any, delivery(), new Error('Channel closed')),
+    ).not.toThrow();
   });
 });
 
