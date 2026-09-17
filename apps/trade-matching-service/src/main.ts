@@ -29,4 +29,10 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch((err: unknown) => {
+  // Anything that stops startup - an unsafe configuration, an unreachable
+  // database - ends the process with its reason and a non-zero status.
+  Logger.flush();
+  new Logger('Bootstrap').error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});

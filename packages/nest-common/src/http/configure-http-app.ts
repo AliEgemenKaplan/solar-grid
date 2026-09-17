@@ -9,6 +9,7 @@ import { AllExceptionsFilter } from '../errors/all-exceptions.filter';
 import { ApiErrorResponse } from '../errors/api-error';
 import { CredentialVerifier, PrincipalKind } from '../auth/credentials';
 import { INTERNAL_SERVICE_AUTH_SCHEME, OPERATOR_AUTH_SCHEME } from '../auth/principal.guard';
+import { connectionUrlProblems, enforceOrWarn } from '../config/runtime-safety';
 
 export interface HttpAppOptions {
   title: string;
@@ -103,17 +104,25 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions)
   );
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Never the values, only whether they are usable.
-  for (const warning of CredentialVerifier.configurationWarnings(
-    {
-      operatorToken: config.get<string>('OPERATOR_API_TOKEN'),
-      internalServiceToken: config.get<string>('INTERNAL_API_TOKEN'),
-    },
-    options.credentials,
-    config.get<string>('NODE_ENV'),
-  )) {
-    logger.warn(warning);
-  }
+  // Never the values, only whether they are usable. In production any of
+  // these stops the service; elsewhere they are warnings.
+  const environment = config.get<string>('NODE_ENV');
+  enforceOrWarn(
+    [
+      ...CredentialVerifier.configurationWarnings(
+        {
+          operatorToken: config.get<string>('OPERATOR_API_TOKEN'),
+          internalServiceToken: config.get<string>('INTERNAL_API_TOKEN'),
+        },
+        options.credentials,
+        environment,
+      ),
+      ...connectionUrlProblems('DATABASE_URL', config.get<string>('DATABASE_URL')),
+      ...connectionUrlProblems('RABBITMQ_URL', config.get<string>('RABBITMQ_URL')),
+    ],
+    environment,
+    logger,
+  );
 
   if (swaggerEnabled) {
     const builder = new DocumentBuilder()
