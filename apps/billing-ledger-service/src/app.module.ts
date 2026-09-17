@@ -11,6 +11,7 @@ import { PrismaService } from './prisma/prisma.service';
 import { TradesModule } from './trades/trades.module';
 import { BalancesModule } from './balances/balances.module';
 import { LedgerModule } from './ledger/ledger.module';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { LedgerModule } from './ledger/ledger.module';
     TradesModule,
     BalancesModule,
     LedgerModule,
+    StatsModule,
     HealthModule.forRoot({
       service: 'billing-ledger-service',
       inject: [PrismaService],

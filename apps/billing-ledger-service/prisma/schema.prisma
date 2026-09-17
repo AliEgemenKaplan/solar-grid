@@ -34,6 +34,8 @@ model CompletedTrade {
   @@index([buyerHouseholdId])
   // Tracing one reading through to the ledger.
   @@index([correlationId])
+  // Statistics read a window of settled trades by when they completed.
+  @@index([completedAt])
   @@map("completed_trades")
 }
 
@@ -55,6 +57,9 @@ model LedgerEntry {
   @@unique([tradeId, householdId, entryType])
   // The ledger endpoint reads one household newest first.
   @@index([householdId, createdAt])
+  // Statistics read a window across every household, which the index above
+  // cannot serve: it starts with the household.
+  @@index([createdAt])
   @@index([tradeId])
   @@map("ledger_entries")
 }
