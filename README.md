@@ -133,6 +133,27 @@ curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"               
 
 [docs/operations.md](docs/operations.md) covers all of it.
 
+## Observability
+
+- **Structured logs.** One JSON object per line, with a stable `event` name
+  (`message.retry.scheduled`, `trade.settled`, `readiness.changed`, ...) and the
+  identifiers to trace it: `correlationId`, `eventId`, `tradeId`, `attempt`,
+  `durationMs`. Tokens, passwords and request bodies are never written.
+- **One correlation id per operation.** It follows a reading from the HTTP
+  request through the outbox, RabbitMQ, trade-matching, pricing and billing to
+  the ledger, in every row and log line on the way:
+  `docker compose -f infrastructure/docker-compose.yml logs --no-color | grep <id>`.
+- **Metrics.** `GET /metrics` on every service, in Prometheus text format, for
+  a scraper holding `METRICS_TOKEN`: HTTP traffic, dependency failures, retries
+  and dead letters, the outbox, trades waiting for billing, settlements.
+- **Outages are tested.** Integration tests stop and start the real database and
+  broker and switch pricing and billing off; `bash scripts/resilience.sh` does
+  the same to the Docker stack.
+
+[docs/observability.md](docs/observability.md) describes the logs and metrics;
+[docs/troubleshooting.md](docs/troubleshooting.md) goes from a symptom to its
+cause and the way back.
+
 ## Prerequisites
 
 - Docker and Docker Compose v2
@@ -274,6 +295,8 @@ SolarGrid/
 | [docs/database-design.md](docs/database-design.md) | Database tables per service                                                       |
 | [docs/api-security.md](docs/api-security.md)       | Authentication, validation, error contract, status codes, pagination, rate limits |
 | [docs/operations.md](docs/operations.md)           | Credentials, database privileges, images, health checks, shutdown, limits         |
+| [docs/observability.md](docs/observability.md)     | Structured logs, correlation ids, metrics                                         |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | From a symptom to its cause and recovery                                          |
 | [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
 | [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |
 

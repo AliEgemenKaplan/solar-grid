@@ -112,8 +112,12 @@ docker exec solar-grid-rabbitmq rabbitmqctl list_queues name messages
 ```
 
 or the management UI at http://localhost:15672 (`RABBITMQ_USER` and
-`RABBITMQ_PASSWORD` from `infrastructure/.env`), where a message
-can be inspected and moved back to `solar-grid.energy` once the cause is fixed.
+`RABBITMQ_PASSWORD` from `infrastructure/.env`), where a message can be
+inspected. Once the cause is fixed it can be republished to `solar-grid.energy`
+under the routing key in its `x-original-routing-key` header; often it does not
+need to be, because the offer or request it carried was stored before the
+failure. [troubleshooting.md](troubleshooting.md#the-dead-letter-queue-has-messages)
+has the steps.
 
 ## Publishing
 
@@ -191,7 +195,13 @@ An id that arrives unusable - longer than 128 characters, or carrying anything
 outside letters, digits, `.`, `_`, `:` and `-` - is replaced with a fresh one
 rather than trusted, because it ends up in log lines, AMQP properties and
 database columns. The consumer applies the same rule to the id inside an event
-and parks the message if it fails.
+and parks the message if it fails; an id that is only padded with whitespace is
+trimmed and passed on clean.
+
+Every log line about the operation carries the id, so
+`docker compose logs --no-color | grep <id>` shows it crossing all four
+services. [observability.md](observability.md#correlation-ids) covers how a
+trade, which joins two readings, picks its id.
 
 ## Duplicate delivery
 
@@ -226,11 +236,12 @@ RabbitMQ refuses to redeclare a queue with different arguments. Run
 
 ## Failure recovery, in short
 
-| Failure                            | What happens                                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Broker down when a reading arrives | The reading is stored, the event stays pending, and it publishes when the broker returns                  |
-| Nothing bound to the exchange      | The broker returns the message, the row stays pending, and it publishes once the consumer starts          |
-| Broker restarts                    | Topology is redeclared on reconnect, persistent messages are still there, publisher and consumer carry on |
-| Consumer fails on a message        | Retried with a growing delay, up to `RABBITMQ_MAX_RETRIES`, then parked in the DLQ                        |
-| Consumer crashes mid-message       | RabbitMQ redelivers it; the unique index on `sourceEventId` keeps the effect to one                       |
-| Malformed message                  | Parked immediately, with the reason in its headers                                                        |
+| Failure                             | What happens                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Broker down when a reading arrives  | The reading is stored, the event stays pending, and it publishes when the broker returns                                                           |
+| Nothing bound to the exchange       | The broker returns the message, the row stays pending, and it publishes once the consumer starts                                                   |
+| Broker restarts                     | Topology is redeclared on reconnect, persistent messages are still there, publisher and consumer carry on                                          |
+| Consumer fails on a message         | Retried with a growing delay, up to `RABBITMQ_MAX_RETRIES`, then parked in the DLQ                                                                 |
+| Consumer crashes mid-message        | RabbitMQ redelivers it; the unique index on `sourceEventId` keeps the effect to one                                                                |
+| Broker connection drops mid-message | The handler finishes, its acknowledgement is lost (`message.ack_lost`), and the redelivery is recognised as a duplicate; the process keeps running |
+| Malformed message                   | Parked immediately, with the reason in its headers                                                                                                 |

@@ -139,7 +139,32 @@ further events are processed.
 Each HTTP service assigns `x-correlation-id` when a request arrives without
 one. It travels through log lines, the event payload, the AMQP `correlationId`
 property and header, the REST calls to pricing and billing, and the rows those
-calls write.
+calls write. Integration tests follow one id from an HTTP request to the
+published message, and from a consumed event through pricing and billing and
+the logs of each step. See [observability.md](observability.md).
+
+## A dropped broker connection does not crash the consumer
+
+If the connection closes while a message is being handled, the handler still
+finishes, but the message can no longer be acknowledged on the closed channel.
+The consumer's error handler logs `message.ack_lost` instead of throwing - a
+throw there would be an unhandled rejection, which ends the process. The broker
+redelivers the message, and the duplicate is recognised.
+
+## Outages are tested, not assumed
+
+Integration tests stop and start real containers:
+
+| Test                                           | Checks                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| billing, database down                         | liveness 200, readiness 503, 503 without detail, recovery, ledger and balances agree |
+| smart-meter, broker down                       | readings accepted, readiness 200, every event published after recovery               |
+| trade-matching, pricing down                   | nothing reserved, retry delays, event parked, operator run 503, recovery             |
+| trade-matching, billing down or answering late | trade stays reserved, billed exactly once                                            |
+| trade-matching, connection closed mid-trade    | redelivered, recognised, billed once, process survives                               |
+| trade-matching, broker restart                 | readiness 503 then 200, consumer resubscribes, trades complete                       |
+
+`scripts/resilience.sh` runs the same outages against the Docker stack.
 
 ## Health endpoints
 

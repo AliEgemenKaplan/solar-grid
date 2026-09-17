@@ -14,6 +14,7 @@ each endpoint is deliberately assigned to one of them.
 | Anyone                     | none                                        | Reads, and submitting meter readings       |
 | Operator                   | `Authorization: Bearer $OPERATOR_API_TOKEN` | Actions that change how the market behaves |
 | Another Solar Grid service | `Authorization: Bearer $INTERNAL_API_TOKEN` | Writing to the ledger                      |
+| A metrics scraper          | `Authorization: Bearer $METRICS_TOKEN`      | Reading `/metrics`, and nothing else       |
 
 ### Every endpoint
 
@@ -33,16 +34,18 @@ each endpoint is deliberately assigned to one of them.
 | billing        | `GET /trades`, `GET /trades/:tradeId`, `GET /trades/household/:householdId` | public                         |                                                                                                                      |
 | billing        | `GET /balances/:householdId`, `GET /ledger/:householdId`                    | public                         |                                                                                                                      |
 | all            | `GET /health`, `/health/live`, `/health/ready`                              | public, not rate limited       |                                                                                                                      |
+| all            | `GET /metrics`                                                              | **metrics**, not rate limited  | Operational counts; see [observability.md](observability.md#metrics)                                                 |
 
 That is every mutation in the system: one public and rate limited, two for
-operators, one for services. Reads are public because the dashboard planned for
+operators, one for services. `/metrics` is the one read that is not public: it
+describes the service's inside rather than the market. Reads are public because the dashboard planned for
 phase 7 runs in a browser, and a browser can never be given either token.
 
 ### Authentication and authorization
 
 ```
 no Authorization header, or not "Bearer <token>"  → 401 UNAUTHENTICATED
-a token that matches neither configured token     → 401 UNAUTHENTICATED
+a token that matches no configured token          → 401 UNAUTHENTICATED
 a valid token for the other role                  → 403 FORBIDDEN
 the token the route requires                      → allowed
 ```
@@ -51,7 +54,7 @@ Credentials are checked before the request body is validated, so an
 unauthenticated caller learns nothing about what a valid body looks like.
 
 - Tokens come from the environment only. Nothing in the source contains one.
-- Both configured tokens are compared on every request, in constant time, over
+- Every configured token is compared on every request, in constant time, over
   SHA-256 digests, so response timing reveals neither how close a guess was nor
   which token it nearly matched.
 - A token is never logged, echoed or included in an error body. Tests assert it.
@@ -65,12 +68,16 @@ unauthenticated caller learns nothing about what a valid body looks like.
 trade-matching sends `INTERNAL_API_TOKEN` when it records a trade with billing.
 Each service only receives the tokens it needs:
 
-| Service        | `OPERATOR_API_TOKEN` | `INTERNAL_API_TOKEN` |
-| -------------- | -------------------- | -------------------- |
-| smart-meter    | -                    | -                    |
-| pricing        | checks               | -                    |
-| trade-matching | checks               | sends                |
-| billing        | -                    | checks               |
+| Service        | `OPERATOR_API_TOKEN` | `INTERNAL_API_TOKEN` | `METRICS_TOKEN` |
+| -------------- | -------------------- | -------------------- | --------------- |
+| smart-meter    | -                    | -                    | checks          |
+| pricing        | checks               | -                    | checks          |
+| trade-matching | checks               | sends                | checks          |
+| billing        | -                    | checks               | checks          |
+
+The metrics token has its own principal so that a scraper - and every service
+that must recognise it - never holds a token that could trigger a matching run
+or record a trade.
 
 A shared bearer token is the minimum that separates "a Solar Grid service" from
 "anyone on the network". It does not identify _which_ service is calling, and
@@ -295,6 +302,7 @@ curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"
 | ---------------------- | ---------------------------- | ----------------------- |
 | `OPERATOR_API_TOKEN`   | none; required in production | pricing, trade-matching |
 | `INTERNAL_API_TOKEN`   | none; required in production | trade-matching, billing |
+| `METRICS_TOKEN`        | none; required in production | all                     |
 | `SWAGGER_ENABLED`      | on outside production        | all                     |
 | `CORS_ALLOWED_ORIGINS` | empty                        | all                     |
 | `RATE_LIMIT_ENABLED`   | `true`                       | all                     |

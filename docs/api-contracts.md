@@ -17,7 +17,7 @@ limits are the same everywhere and are described once, in
 - **`x-correlation-id`** may be sent with any request and is always returned.
 - **Swagger** is at `http://localhost:<port>/api` when enabled.
 
-Access: 🌐 public · 🔑 operator token · 🔒 internal service token
+Access: 🌐 public · 🔑 operator token · 🔒 internal service token · 📈 metrics token
 
 ---
 
@@ -256,6 +256,18 @@ Paged, append-only entries, newest first. Filter: `correlationId`.
 
 The process is running. Never checks a dependency. `/health` is the original
 path and returns the same.
+
+### 📈 GET /metrics
+
+Prometheus text format, with `Authorization: Bearer $METRICS_TOKEN`. `401`
+without it, `403` with another token. Not rate limited, `Cache-Control:
+no-store`. The metric names are listed in
+[observability.md](observability.md#metrics).
+
+```
+solargrid_http_requests_total{method="GET",route="/matches",status="200",service="trade-matching-service"} 42
+solargrid_messages_total{event_type="EnergyDemandDetected",outcome="processed",service="trade-matching-service"} 7
+```
 
 ### 🌐 GET /health/ready
 

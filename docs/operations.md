@@ -48,6 +48,7 @@ by git.
 | `RABBITMQ_USER`, `RABBITMQ_PASSWORD`                                                           | the broker, smart-meter, trade-matching                      |
 | `OPERATOR_API_TOKEN`                                                                           | pricing, trade-matching                                      |
 | `INTERNAL_API_TOKEN`                                                                           | trade-matching, billing                                      |
+| `METRICS_TOKEN`                                                                                | every service, to protect `/metrics`                         |
 
 Each container receives only the variables it uses. The billing container, for
 instance, has its runtime database URL and the internal token; it has no owner
@@ -60,7 +61,7 @@ refuses to start when:
 
 - a token it uses is missing, shorter than 32 characters, or a development
   placeholder (`not-for-production`)
-- the operator and internal tokens are the same value
+- any two of the operator, internal and metrics tokens are the same value
 - `DATABASE_URL` or `RABBITMQ_URL` carries no password, a password shorter than
   16 characters, or a well-known one (`postgres`, `guest`, `password`, `test`,
   `change-me`, ...)
@@ -247,6 +248,23 @@ shutdown, and checks that the consumer is cancelled at once, a message arriving
 meanwhile stays queued, the database closes only after the first message is
 acknowledged, and the next consumer receives exactly the queued message.
 
+## Observability and failures
+
+Logs, correlation ids and metrics are described in
+[observability.md](observability.md); diagnosing and recovering from a failure
+in [troubleshooting.md](troubleshooting.md). To check that the stack survives
+its dependencies failing:
+
+```bash
+bash scripts/resilience.sh
+```
+
+It stops and starts each dependency in turn - a database, the broker, pricing,
+billing, trade-matching itself - and checks that every outage is reported,
+handled and recovered from, that one correlation id can be followed through all
+four services' logs, and that no secret appears in any log. It changes the
+stack's state, so run it on a local stack only.
+
 ## Resource limits
 
 | Container       | Memory limit | Reservation | CPUs | Idle usage |
@@ -270,3 +288,4 @@ than running out of memory.
 | `ACCESS_REFUSED` from RabbitMQ                                        | The broker volume was created with other credentials. `pnpm docker:clean`, then `up`.                                  |
 | A service stays `health: starting`                                    | `curl localhost:<port>/health/ready` says which dependency is down; the service log says why.                          |
 | `permission denied for table ...` in a service log                    | The code writes somewhere its grants do not allow. Add the privilege to `runtime-grants.sql` if the write is intended. |
+| Anything that goes wrong once the stack is running                    | See [troubleshooting.md](troubleshooting.md).                                                                          |
