@@ -22,10 +22,21 @@ IDEM_SELLER_ID="HH-IDEM-SELLER-${RUN_ID}"
 IDEM_BUYER_ID="HH-IDEM-BUYER-${RUN_ID}"
 CORRELATION_ID="demo-${RUN_ID}"
 
-# The development defaults from infrastructure/docker-compose.yml. Set the real
-# values in the environment when the stack runs with its own secrets.
-OPERATOR_TOKEN="${OPERATOR_API_TOKEN:-dev-operator-token-not-for-production}"
-INTERNAL_TOKEN="${INTERNAL_API_TOKEN:-dev-internal-token-not-for-production}"
+# The tokens the stack was started with: from the environment when set there,
+# otherwise from infrastructure/.env (created by `pnpm env:init`). They are
+# sent with requests and never printed.
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/infrastructure/.env"
+env_file_value() {
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'
+}
+OPERATOR_TOKEN="${OPERATOR_API_TOKEN:-$(env_file_value OPERATOR_API_TOKEN)}"
+INTERNAL_TOKEN="${INTERNAL_API_TOKEN:-$(env_file_value INTERNAL_API_TOKEN)}"
+if [ -z "$OPERATOR_TOKEN" ] || [ -z "$INTERNAL_TOKEN" ]; then
+  echo "ERROR: OPERATOR_API_TOKEN and INTERNAL_API_TOKEN are neither set nor in $ENV_FILE."
+  echo "Run 'pnpm env:init' before starting the stack."
+  exit 1
+fi
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -126,18 +137,18 @@ echo "Matching:    $BASE_MATCHING"
 echo "Billing:     $BASE_BILLING"
 echo
 
-echo "1. Health checks"
+echo "1. Readiness checks"
 for pair in \
-  "smart-meter|$BASE_SMART_METER/health" \
-  "pricing|$BASE_PRICING/health" \
-  "trade-matching|$BASE_MATCHING/health" \
-  "billing-ledger|$BASE_BILLING/health"; do
+  "smart-meter|$BASE_SMART_METER/health/ready" \
+  "pricing|$BASE_PRICING/health/ready" \
+  "trade-matching|$BASE_MATCHING/health/ready" \
+  "billing-ledger|$BASE_BILLING/health/ready"; do
   name="${pair%%|*}"
   url="${pair#*|}"
-  if response="$(request GET "$url" 2>/dev/null)" && [ "$(printf '%s' "$response" | json_value status)" = "ok" ]; then
-    pass "$name health"
+  if response="$(request GET "$url" 2>/dev/null)" && [ "$(printf '%s' "$response" | json_value status)" = "ready" ]; then
+    pass "$name ready"
   else
-    fail "$name health"
+    fail "$name ready"
   fi
 done
 echo

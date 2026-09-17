@@ -13,6 +13,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "env:init": "node scripts/init-env.mjs",
     "start:dev": "docker compose -f infrastructure/docker-compose.yml up",
     "docker:up": "docker compose -f infrastructure/docker-compose.yml up -d --build",
     "docker:down": "docker compose -f infrastructure/docker-compose.yml down",

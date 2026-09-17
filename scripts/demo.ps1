@@ -12,9 +12,24 @@ $IdemSellerId = "HH-IDEM-SELLER-$RunId"
 $IdemBuyerId = "HH-IDEM-BUYER-$RunId"
 $CorrelationId = "demo-$RunId"
 
-# The development defaults from infrastructure/docker-compose.yml.
-$OperatorToken = if ($env:OPERATOR_API_TOKEN) { $env:OPERATOR_API_TOKEN } else { "dev-operator-token-not-for-production" }
-$InternalToken = if ($env:INTERNAL_API_TOKEN) { $env:INTERNAL_API_TOKEN } else { "dev-internal-token-not-for-production" }
+# The tokens the stack was started with: from the environment when set there,
+# otherwise from infrastructure/.env (created by `pnpm env:init`). They are
+# sent with requests and never printed.
+$EnvFile = Join-Path (Split-Path -Parent $PSScriptRoot) "infrastructure/.env"
+function Get-EnvFileValue {
+    param([string]$Name)
+    if (-not (Test-Path $EnvFile)) { return $null }
+    $line = Get-Content $EnvFile | Where-Object { $_ -like "$Name=*" } | Select-Object -Last 1
+    if ($line) { return $line.Substring($Name.Length + 1).Trim() }
+    return $null
+}
+$OperatorToken = if ($env:OPERATOR_API_TOKEN) { $env:OPERATOR_API_TOKEN } else { Get-EnvFileValue "OPERATOR_API_TOKEN" }
+$InternalToken = if ($env:INTERNAL_API_TOKEN) { $env:INTERNAL_API_TOKEN } else { Get-EnvFileValue "INTERNAL_API_TOKEN" }
+if (-not $OperatorToken -or -not $InternalToken) {
+    Write-Host "ERROR: OPERATOR_API_TOKEN and INTERNAL_API_TOKEN are neither set nor in $EnvFile." -ForegroundColor Red
+    Write-Host "Run 'pnpm env:init' before starting the stack."
+    exit 1
+}
 
 $PassCount = 0
 $FailCount = 0
@@ -70,20 +85,20 @@ Write-Host "Matching:    $BASE_MATCHING"
 Write-Host "Billing:     $BASE_BILLING"
 Write-Host ""
 
-Write-Host "1. Health checks"
+Write-Host "1. Readiness checks"
 $services = @(
-    @{ Name = "smart-meter"; Url = "$BASE_SMART_METER/health" },
-    @{ Name = "pricing"; Url = "$BASE_PRICING/health" },
-    @{ Name = "trade-matching"; Url = "$BASE_MATCHING/health" },
-    @{ Name = "billing-ledger"; Url = "$BASE_BILLING/health" }
+    @{ Name = "smart-meter"; Url = "$BASE_SMART_METER/health/ready" },
+    @{ Name = "pricing"; Url = "$BASE_PRICING/health/ready" },
+    @{ Name = "trade-matching"; Url = "$BASE_MATCHING/health/ready" },
+    @{ Name = "billing-ledger"; Url = "$BASE_BILLING/health/ready" }
 )
 
 foreach ($svc in $services) {
     $response = Invoke-JsonApi -Url $svc.Url
-    if ($response -and $response.status -eq "ok") {
-        Add-Pass "$($svc.Name) health"
+    if ($response -and $response.status -eq "ready") {
+        Add-Pass "$($svc.Name) ready"
     } else {
-        Add-Fail "$($svc.Name) health"
+        Add-Fail "$($svc.Name) ready"
     }
 }
 Write-Host ""
