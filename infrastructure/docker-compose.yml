@@ -1,3 +1,13 @@
+# Solar Grid, production-like, on one machine.
+#
+# Every credential comes from infrastructure/.env; none has a default here.
+# Create that file with `pnpm env:init`, which fills it with random values.
+#
+# Start-up order: databases and broker become healthy -> each service's
+# migration job applies its migrations and runtime grants as the database
+# owner and exits -> the service starts as its least-privileged runtime role
+# and reports healthy once /health/ready answers.
+
 x-http-platform: &http-platform
   # Off unless asked for: this stack runs with NODE_ENV=production. Set
   # SWAGGER_ENABLED=true in infrastructure/.env to browse the API locally.
@@ -8,6 +18,69 @@ x-http-platform: &http-platform
   RATE_LIMIT_TTL_MS: ${RATE_LIMIT_TTL_MS:-60000}
   RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
   RATE_LIMIT_WRITE_MAX: ${RATE_LIMIT_WRITE_MAX:-60}
+  # Kept below stop_grace_period, so the service gives up waiting on its own
+  # before Docker kills it.
+  SHUTDOWN_TIMEOUT_MS: 25000
+
+# What every Node container gets: a read-only root filesystem with a small
+# writable /tmp, no Linux capabilities, no privilege escalation.
+x-hardened-node: &hardened-node
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-service: &service
+  <<: *hardened-node
+  stop_grace_period: 30s
+  restart: unless-stopped
+  healthcheck:
+    # Readiness, not liveness: compose uses health to decide when dependants
+    # may start, which is exactly "can this service do useful work".
+    test:
+      - CMD
+      - node
+      - -e
+      - "fetch('http://127.0.0.1:' + process.env.PORT + '/health/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 60s
+    start_interval: 2s
+  deploy:
+    resources:
+      # About 50 MiB each when idle; the limit leaves room for bursts and for
+      # Swagger when it is switched on.
+      limits:
+        cpus: '1.0'
+        memory: 256M
+      reservations:
+        memory: 64M
+
+x-migration-job: &migration-job
+  <<: *hardened-node
+  restart: 'no'
+  deploy:
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: 384M
+
+x-postgres-healthcheck: &postgres-healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
+
+x-postgres-resources: &postgres-resources
+  resources:
+    limits:
+      cpus: '1.0'
+      memory: 256M
+    reservations:
+      memory: 64M
 
 services:
   # ─── Infrastructure ────────────────────────────────────────────────────────
@@ -18,8 +91,8 @@ services:
       - '127.0.0.1:${RABBITMQ_PORT:-5672}:5672'
       - '127.0.0.1:${RABBITMQ_UI_PORT:-15672}:15672'
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-solargrid}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in infrastructure/.env (pnpm env:init)}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -28,7 +101,17 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    stop_grace_period: 30s
     restart: unless-stopped
+    deploy:
+      resources:
+        # Idles around 130 MiB with the management plugin. RabbitMQ applies
+        # flow control at 40% of this limit rather than running out of memory.
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          memory: 128M
 
   postgres-smart-meter:
     image: postgres:15-alpine
@@ -36,15 +119,16 @@ services:
     environment:
       POSTGRES_DB: smart_meter_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infrastructure/.env (pnpm env:init)}
+      APP_DB_PASSWORD: ${SMART_METER_DB_PASSWORD:?Set SMART_METER_DB_PASSWORD in infrastructure/.env (pnpm env:init)}
     volumes:
       - smart_meter_data:/var/lib/postgresql/data
+      - ./postgres/create-app-role.sh:/docker-entrypoint-initdb.d/10-create-app-role.sh:ro
     healthcheck:
+      <<: *postgres-healthcheck
       test: ['CMD-SHELL', 'pg_isready -U postgres -d smart_meter_db']
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
+    deploy: *postgres-resources
 
   postgres-pricing:
     image: postgres:15-alpine
@@ -52,15 +136,16 @@ services:
     environment:
       POSTGRES_DB: pricing_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infrastructure/.env (pnpm env:init)}
+      APP_DB_PASSWORD: ${PRICING_DB_PASSWORD:?Set PRICING_DB_PASSWORD in infrastructure/.env (pnpm env:init)}
     volumes:
       - pricing_data:/var/lib/postgresql/data
+      - ./postgres/create-app-role.sh:/docker-entrypoint-initdb.d/10-create-app-role.sh:ro
     healthcheck:
+      <<: *postgres-healthcheck
       test: ['CMD-SHELL', 'pg_isready -U postgres -d pricing_db']
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
+    deploy: *postgres-resources
 
   postgres-matching:
     image: postgres:15-alpine
@@ -68,15 +153,16 @@ services:
     environment:
       POSTGRES_DB: matching_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infrastructure/.env (pnpm env:init)}
+      APP_DB_PASSWORD: ${MATCHING_DB_PASSWORD:?Set MATCHING_DB_PASSWORD in infrastructure/.env (pnpm env:init)}
     volumes:
       - matching_data:/var/lib/postgresql/data
+      - ./postgres/create-app-role.sh:/docker-entrypoint-initdb.d/10-create-app-role.sh:ro
     healthcheck:
+      <<: *postgres-healthcheck
       test: ['CMD-SHELL', 'pg_isready -U postgres -d matching_db']
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
+    deploy: *postgres-resources
 
   postgres-ledger:
     image: postgres:15-alpine
@@ -84,21 +170,77 @@ services:
     environment:
       POSTGRES_DB: ledger_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infrastructure/.env (pnpm env:init)}
+      APP_DB_PASSWORD: ${LEDGER_DB_PASSWORD:?Set LEDGER_DB_PASSWORD in infrastructure/.env (pnpm env:init)}
     volumes:
       - ledger_data:/var/lib/postgresql/data
+      - ./postgres/create-app-role.sh:/docker-entrypoint-initdb.d/10-create-app-role.sh:ro
     healthcheck:
+      <<: *postgres-healthcheck
       test: ['CMD-SHELL', 'pg_isready -U postgres -d ledger_db']
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
+    deploy: *postgres-resources
 
-  # ─── Application Services ──────────────────────────────────────────────────
-  smart-meter-service:
+  # ─── Migration jobs: run once per `up`, as the database owner ─────────────
+  smart-meter-migrate:
+    <<: *migration-job
     build:
       context: ..
       dockerfile: apps/smart-meter-service/Dockerfile
+      target: migrate
+    container_name: solar-grid-smart-meter-migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres-smart-meter:5432/smart_meter_db
+    depends_on:
+      postgres-smart-meter:
+        condition: service_healthy
+
+  pricing-migrate:
+    <<: *migration-job
+    build:
+      context: ..
+      dockerfile: apps/pricing-engine-service/Dockerfile
+      target: migrate
+    container_name: solar-grid-pricing-migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres-pricing:5432/pricing_db
+    depends_on:
+      postgres-pricing:
+        condition: service_healthy
+
+  trade-matching-migrate:
+    <<: *migration-job
+    build:
+      context: ..
+      dockerfile: apps/trade-matching-service/Dockerfile
+      target: migrate
+    container_name: solar-grid-trade-matching-migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres-matching:5432/matching_db
+    depends_on:
+      postgres-matching:
+        condition: service_healthy
+
+  billing-migrate:
+    <<: *migration-job
+    build:
+      context: ..
+      dockerfile: apps/billing-ledger-service/Dockerfile
+      target: migrate
+    container_name: solar-grid-billing-migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres-ledger:5432/ledger_db
+    depends_on:
+      postgres-ledger:
+        condition: service_healthy
+
+  # ─── Application services: runtime roles only ──────────────────────────────
+  smart-meter-service:
+    <<: *service
+    build:
+      context: ..
+      dockerfile: apps/smart-meter-service/Dockerfile
+      target: runtime
     container_name: solar-grid-smart-meter
     ports:
       - '127.0.0.1:${SMART_METER_PORT:-3001}:3001'
@@ -106,68 +248,71 @@ services:
       <<: *http-platform
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: postgresql://postgres:postgres@postgres-smart-meter:5432/smart_meter_db
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      DATABASE_URL: postgresql://solargrid_app:${SMART_METER_DB_PASSWORD}@postgres-smart-meter:5432/smart_meter_db
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-solargrid}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       OUTBOX_POLL_INTERVAL_MS: 2000
       OUTBOX_PUBLISH_TIMEOUT_MS: 5000
     depends_on:
-      postgres-smart-meter:
-        condition: service_healthy
+      smart-meter-migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
-    restart: unless-stopped
 
   pricing-engine-service:
+    <<: *service
     build:
       context: ..
       dockerfile: apps/pricing-engine-service/Dockerfile
+      target: runtime
     container_name: solar-grid-pricing-engine
     ports:
       - '127.0.0.1:${PRICING_PORT:-3002}:3002'
     environment:
       <<: *http-platform
-      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-dev-operator-token-not-for-production}
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:?Set OPERATOR_API_TOKEN in infrastructure/.env (pnpm env:init)}
       NODE_ENV: production
       PORT: 3002
-      DATABASE_URL: postgresql://postgres:postgres@postgres-pricing:5432/pricing_db
+      DATABASE_URL: postgresql://solargrid_app:${PRICING_DB_PASSWORD}@postgres-pricing:5432/pricing_db
     depends_on:
-      postgres-pricing:
-        condition: service_healthy
-    restart: unless-stopped
+      pricing-migrate:
+        condition: service_completed_successfully
 
   billing-ledger-service:
+    <<: *service
     build:
       context: ..
       dockerfile: apps/billing-ledger-service/Dockerfile
+      target: runtime
     container_name: solar-grid-billing-ledger
     ports:
       - '127.0.0.1:${BILLING_PORT:-3004}:3004'
     environment:
       <<: *http-platform
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-not-for-production}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in infrastructure/.env (pnpm env:init)}
       NODE_ENV: production
       PORT: 3004
-      DATABASE_URL: postgresql://postgres:postgres@postgres-ledger:5432/ledger_db
+      DATABASE_URL: postgresql://solargrid_app:${LEDGER_DB_PASSWORD}@postgres-ledger:5432/ledger_db
     depends_on:
-      postgres-ledger:
-        condition: service_healthy
-    restart: unless-stopped
+      billing-migrate:
+        condition: service_completed_successfully
 
   trade-matching-service:
+    <<: *service
     build:
       context: ..
       dockerfile: apps/trade-matching-service/Dockerfile
+      target: runtime
     container_name: solar-grid-trade-matching
     ports:
       - '127.0.0.1:${TRADE_MATCHING_PORT:-3003}:3003'
     environment:
       <<: *http-platform
-      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-dev-operator-token-not-for-production}
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-not-for-production}
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:?Set OPERATOR_API_TOKEN in infrastructure/.env (pnpm env:init)}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in infrastructure/.env (pnpm env:init)}
       NODE_ENV: production
       PORT: 3003
-      DATABASE_URL: postgresql://postgres:postgres@postgres-matching:5432/matching_db
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      DATABASE_URL: postgresql://solargrid_app:${MATCHING_DB_PASSWORD}@postgres-matching:5432/matching_db
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-solargrid}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       PRICING_ENGINE_URL: http://pricing-engine-service:3002
       BILLING_LEDGER_URL: http://billing-ledger-service:3004
       HTTP_CLIENT_TIMEOUT_MS: 5000
@@ -175,15 +320,14 @@ services:
       RABBITMQ_RETRY_DELAY_MS: 2000
       RABBITMQ_PREFETCH: 1
     depends_on:
-      postgres-matching:
-        condition: service_healthy
+      trade-matching-migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
       pricing-engine-service:
-        condition: service_started
+        condition: service_healthy
       billing-ledger-service:
-        condition: service_started
-    restart: unless-stopped
+        condition: service_healthy
 
 volumes:
   rabbitmq_data:

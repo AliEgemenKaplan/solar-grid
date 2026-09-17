@@ -1,9 +1,10 @@
 # Optional: publish the database ports on the loopback interface.
 #
 # The base compose file keeps PostgreSQL unreachable from the host, which is
-# the right default: nothing outside the compose network needs it, and the
-# containers use a superuser account. Running a service on your own machine
-# against the containerised databases does need them, so opt in explicitly:
+# the right default: nothing outside the compose network needs it, and each
+# database also holds an owner account that only the migration jobs should
+# use. Running a service on your own machine against the containerised
+# databases does need them, so opt in explicitly:
 #
 #   docker compose -f infrastructure/docker-compose.yml \
 #                  -f infrastructure/docker-compose.dev-ports.yml up -d
