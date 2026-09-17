@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
-import { configureHttpApp } from '@solar-grid/nest-common';
+import { configureHttpApp, installGracefulShutdown } from '@solar-grid/nest-common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -15,6 +15,10 @@ async function bootstrap() {
     tags: ['Readings', 'Households', 'Health'],
     credentials: [],
   });
+
+  // Nest's own shutdown hooks are not enabled: this handler runs the same
+  // close, with a deadline, and exits with a status that says how it went.
+  installGracefulShutdown(app);
 
   const port = process.env.PORT || 3001;
   await app.listen(port);

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AmqpConnection,
@@ -33,7 +33,7 @@ import { readRetryConfig, retryDelayMs, RetryConfig } from './retry.config';
 import { Prisma } from '../../generated/client';
 
 @Injectable()
-export class EnergyEventsConsumer {
+export class EnergyEventsConsumer implements BeforeApplicationShutdown {
   private readonly logger = new Logger(EnergyEventsConsumer.name);
   private readonly retryConfig: RetryConfig;
 
@@ -44,6 +44,34 @@ export class EnergyEventsConsumer {
     config: ConfigService,
   ) {
     this.retryConfig = readRetryConfig(config);
+  }
+
+  /**
+   * Stops taking messages and waits for the ones already being handled.
+   *
+   * Cancelling the consumer means the broker delivers nothing more to this
+   * process; messages still queued stay queued for the next consumer. A
+   * message being handled finishes and is acknowledged - or retried, or parked
+   * - exactly as it would have been, while the database and the broker are
+   * still connected. Both close only after this returns.
+   */
+  async beforeApplicationShutdown(): Promise<void> {
+    for (const tag of this.amqp.consumerTags) {
+      try {
+        await this.amqp.cancelConsumer(tag);
+      } catch (err) {
+        // The library keeps consumers from before a reconnect, whose channel is
+        // gone; a closed channel delivers nothing, so there is nothing to stop.
+        this.logger.log(`Consumer ${tag} was already closed (${describe(err)})`);
+      }
+    }
+
+    const inFlight = deliveriesInProgress(this.amqp);
+    if (inFlight.length > 0) {
+      this.logger.log(`Stopped consuming; waiting for ${inFlight.length} message(s) in progress`);
+      await Promise.allSettled(inFlight);
+    }
+    this.logger.log('Energy event consumer stopped');
   }
 
   @RabbitSubscribe({
@@ -264,6 +292,19 @@ export function validateEnergyEvent(event: unknown): string | null {
   }
 
   return `unknown eventType: ${String(candidate.eventType)}`;
+}
+
+/**
+ * The library records every delivery from the moment it arrives until its
+ * handler settles - guards and all - and waits on the same set when it closes
+ * the connection. That wait happens alongside the database disconnect, though,
+ * so it is done here first. The messaging integration tests fail if the
+ * library stops keeping this set.
+ */
+function deliveriesInProgress(amqp: AmqpConnection): Promise<unknown>[] {
+  const tracked = (amqp as unknown as { outstandingMessageProcessing?: Set<Promise<unknown>> })
+    .outstandingMessageProcessing;
+  return tracked ? [...tracked] : [];
 }
 
 /** How many times this message has already been retried. */

@@ -10,3 +10,4 @@ export * from './http/configure-http-app';
 export * from './http/correlation-id.decorator';
 export * from './health/readiness';
 export * from './health/health.module';
+export * from './lifecycle/graceful-shutdown';

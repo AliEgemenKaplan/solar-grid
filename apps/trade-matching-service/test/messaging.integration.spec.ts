@@ -311,6 +311,104 @@ describe('messaging reliability', () => {
     });
   });
 
+  describe('shutdown', () => {
+    it('finishes the message in progress before closing and leaves queued messages for the next consumer', async () => {
+      const order: string[] = [];
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => (markStarted = resolve));
+
+      const create = jest.fn(async (args: { data: { householdId: string } }) => {
+        if (args.data.householdId === 'HH-IN-FLIGHT') {
+          markStarted();
+          await released;
+        }
+        return { id: `offer-${args.data.householdId}` };
+      });
+      const runMatching = jest.fn(async () => {
+        order.push('message handled');
+        return { matched: 0, failed: 0, skipped: 0 };
+      });
+      const prismaDouble = {
+        sellOffer: { create },
+        buyRequest: { create },
+        // Stands in for PrismaService closing its pool.
+        onApplicationShutdown: () => {
+          order.push('database closed');
+        },
+      };
+
+      // Only one RabbitMQ module can be running at a time in a process, so
+      // the consumer's own connection - open until its shutdown completes - is
+      // used to publish and inspect while it closes.
+      let consumer: INestApplication | undefined;
+      let closing: Promise<unknown> | undefined;
+      let next: INestApplication | undefined;
+      try {
+        consumer = await startConsumer({ prisma: prismaDouble, matching: { runMatching } });
+        const amqp = consumer.get(AmqpConnection);
+        await purgeAll(amqp);
+
+        await amqp.publish(
+          EXCHANGE_SOLAR_GRID_ENERGY,
+          ROUTING_KEY_SURPLUS_DETECTED,
+          surplusEvent({ householdId: 'HH-IN-FLIGHT' }),
+        );
+        await started;
+
+        closing = consumer.close().then(() => order.push('application closed'));
+
+        await waitFor(
+          async () =>
+            (await amqp.channel.checkQueue(QUEUE_TRADE_MATCHING_ENERGY)).consumerCount === 0,
+          'the consumer to be cancelled',
+        );
+
+        // Arrives after the consumer was cancelled: it must wait in the queue.
+        await amqp.publish(
+          EXCHANGE_SOLAR_GRID_ENERGY,
+          ROUTING_KEY_SURPLUS_DETECTED,
+          surplusEvent({ householdId: 'HH-QUEUED' }),
+        );
+        await waitForQueueDepth(amqp, QUEUE_TRADE_MATCHING_ENERGY, 1);
+        await wait(500);
+        expect(create).toHaveBeenCalledTimes(1);
+        // Nothing has closed while the first message is still being handled.
+        expect(order).toEqual([]);
+
+        release();
+        await closing;
+
+        expect(order).toEqual(['message handled', 'database closed', 'application closed']);
+
+        // The next consumer finds exactly the message that arrived during
+        // shutdown: the handled one was acknowledged, not redelivered.
+        next = await startConsumer({
+          prisma: { sellOffer: { create }, buyRequest: { create } },
+          matching: { runMatching },
+        });
+        const nextAmqp = next.get(AmqpConnection);
+        await waitFor(() => create.mock.calls.length === 2, 'the next consumer to take it');
+        await wait(1000);
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(create.mock.calls[1][0].data.householdId).toBe('HH-QUEUED');
+        await waitForQueueDepth(nextAmqp, QUEUE_TRADE_MATCHING_ENERGY, 0);
+        expect((await nextAmqp.channel.checkQueue(QUEUE_TRADE_MATCHING_DLQ)).messageCount).toBe(0);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          expect((await nextAmqp.channel.checkQueue(retryQueueName(attempt))).messageCount).toBe(0);
+        }
+      } finally {
+        // Whatever failed, close what was opened: a connection left open keeps
+        // reconnecting and jest never exits.
+        release();
+        if (closing) await closing.catch(() => undefined);
+        else await consumer?.close();
+        await next?.close();
+      }
+    });
+  });
+
   describe('durability', () => {
     it('keeps the topology and its messages across a broker restart', async () => {
       const app = await startConsumer({

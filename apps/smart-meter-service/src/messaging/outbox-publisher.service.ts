@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { ConfigService } from '@nestjs/config';
 import type { ConfirmChannel, ConsumeMessage } from 'amqplib';
@@ -40,12 +40,14 @@ type PublishFailure = 'unroutable' | 'broker';
  *   published again later, and the consumer ignores the duplicate
  */
 @Injectable()
-export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
+export class OutboxPublisherService implements OnModuleInit, BeforeApplicationShutdown {
   private readonly logger = new Logger(OutboxPublisherService.name);
   private readonly pollIntervalMs: number;
   private readonly publishTimeoutMs: number;
   private timer?: NodeJS.Timeout;
-  private draining = false;
+  /** The drain pass in progress, if any. */
+  private inProgress: Promise<number> | null = null;
+  private stopped = false;
   /** Message ids the broker handed back because nothing was bound to route them. */
   private readonly returned = new Set<string>();
 
@@ -81,17 +83,35 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     this.timer.unref();
   }
 
-  onModuleDestroy(): void {
+  /**
+   * Stops publishing and waits for the event being published to settle.
+   *
+   * Events not reached stay PENDING and go out after the next start. A reading
+   * accepted while the service is shutting down is still stored with its event;
+   * it simply waits for that start too.
+   */
+  async beforeApplicationShutdown(): Promise<void> {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.inProgress) {
+      this.logger.log('Waiting for the outbox publish in progress before shutting down');
+      await this.inProgress;
+    }
   }
 
   /**
    * Publishes pending events oldest first. Overlapping calls are a no-op, so
    * the timer and the request path can both ask for a drain.
    */
-  async drain(): Promise<number> {
-    if (this.draining) return 0;
-    this.draining = true;
+  drain(): Promise<number> {
+    if (this.stopped || this.inProgress) return Promise.resolve(0);
+    this.inProgress = this.drainPending().finally(() => {
+      this.inProgress = null;
+    });
+    return this.inProgress;
+  }
+
+  private async drainPending(): Promise<number> {
     try {
       const pending = await this.prisma.outboxEvent.findMany({
         where: { status: 'PENDING' },
@@ -101,6 +121,9 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
 
       let published = 0;
       for (const event of pending) {
+        // Finish the event in hand, but do not start another once shutdown
+        // has begun: the rest are safe where they are.
+        if (this.stopped) break;
         const failure = await this.publishOne(event);
         if (!failure) {
           published++;
@@ -115,8 +138,6 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.logger.error(`Outbox drain failed: ${describe(err)}`);
       return 0;
-    } finally {
-      this.draining = false;
     }
   }
 
