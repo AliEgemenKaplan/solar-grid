@@ -69,6 +69,11 @@ The script verifies:
 13. `GET /matches?limit=100000` is `400`.
 14. The same idempotency key with a different payload is `409`.
 15. An error body carries a `code` and the request's correlation id, and no stack trace.
+16. Energy statistics count the demo's readings.
+17. Trade statistics report the settled trade, its volume and an average price.
+18. Billing statistics show a ledger whose credits and debits cancel to `0.00`.
+19. An hourly trend returns 24 buckets in order, quiet ones included.
+20. `GET /stats/summary` without a token is `401`, with the service token `403`.
 
 The scripts read `OPERATOR_API_TOKEN` and `INTERNAL_API_TOKEN` from the
 environment, or else from `infrastructure/.env`, and never print them.

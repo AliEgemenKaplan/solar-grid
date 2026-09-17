@@ -304,6 +304,60 @@ else
 fi
 echo
 
+echo "11. Statistics"
+# The analytics surface, read with the operator token: what the meters
+# recorded, what traded, and whether the ledger still balances.
+stats_check() {
+  local label="$1" url="$2" script="$3"
+  local body
+  if body="$(request_as "$OPERATOR_TOKEN" GET "$url" 2>/dev/null)"     && printf '%s' "$body" | "$PYTHON_BIN" -c "$script"; then
+    pass "$label"
+  else
+    fail "$label"
+  fi
+}
+
+stats_check "energy statistics count the readings" "$BASE_SMART_METER/stats/summary" '
+import json, sys
+from decimal import Decimal
+data = json.load(sys.stdin)
+sys.exit(0 if data["readings"] >= 2 and Decimal(data["productionKwh"]) > 0 else 1)
+'
+
+stats_check "trade statistics report the settled trade" "$BASE_MATCHING/stats/summary" '
+import json, sys
+from decimal import Decimal
+data = json.load(sys.stdin)
+completed = data["completed"]
+ok = (
+    data["trades"]["completed"] >= 1
+    and Decimal(completed["energyKwh"]) > 0
+    and Decimal(completed["volume"]) > 0
+    and completed["averagePricePerKwh"] is not None
+)
+sys.exit(0 if ok else 1)
+'
+
+stats_check "billing statistics show a ledger that balances" "$BASE_BILLING/stats/summary" '
+import json, sys
+data = json.load(sys.stdin)
+ledger = data["ledger"]
+sys.exit(0 if ledger["entries"] >= 2 and ledger["net"] == "0.00" else 1)
+'
+
+stats_check "an hourly trend returns one bucket an hour, quiet ones included"   "$BASE_MATCHING/stats/trends?bucket=hour" '
+import json, sys
+data = json.load(sys.stdin)
+buckets = data["buckets"]
+starts = [bucket["bucketStart"] for bucket in buckets]
+ok = data["bucket"] == "hour" and len(buckets) == 24 and starts == sorted(starts)
+sys.exit(0 if ok else 1)
+'
+
+check_status "statistics without a token are refused" 401   "$(status_of - GET "$BASE_MATCHING/stats/summary")"
+check_status "statistics with the service token are forbidden" 403   "$(status_of "$INTERNAL_TOKEN" GET "$BASE_MATCHING/stats/summary")"
+echo
+
 echo "Summary: $PASS_COUNT passed, $FAIL_COUNT failed"
 if [ "$FAIL_COUNT" -gt 0 ]; then
   exit 1

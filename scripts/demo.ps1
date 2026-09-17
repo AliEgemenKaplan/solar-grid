@@ -259,6 +259,48 @@ $conflictBody.totalAmount = "12.00"
 Assert-Status "the same idempotency key with a different payload is a conflict" 409 (Get-StatusCode -Method POST -Url "$BASE_BILLING/trades" -Token $InternalToken -Body $conflictBody)
 Write-Host ""
 
+Write-Host "10. Statistics"
+# The analytics surface, read with the operator token: what the meters
+# recorded, what traded, and whether the ledger still balances.
+$energyStats = Invoke-JsonApi -Url "$BASE_SMART_METER/stats/summary" -Token $OperatorToken
+if ($energyStats -and $energyStats.readings -ge 2 -and [decimal]$energyStats.productionKwh -gt 0) {
+    Write-Host "Energy: readings=$($energyStats.readings) productionKwh=$($energyStats.productionKwh)"
+    Add-Pass "energy statistics count the readings"
+} else {
+    Add-Fail "energy statistics count the readings"
+}
+
+$tradeStats = Invoke-JsonApi -Url "$BASE_MATCHING/stats/summary" -Token $OperatorToken
+if ($tradeStats -and $tradeStats.trades.completed -ge 1 -and
+    [decimal]$tradeStats.completed.volume -gt 0 -and
+    $null -ne $tradeStats.completed.averagePricePerKwh) {
+    Write-Host "Trades: completed=$($tradeStats.trades.completed) volume=$($tradeStats.completed.volume) avgPrice=$($tradeStats.completed.averagePricePerKwh)"
+    Add-Pass "trade statistics report the settled trade"
+} else {
+    Add-Fail "trade statistics report the settled trade"
+}
+
+$billingStats = Invoke-JsonApi -Url "$BASE_BILLING/stats/summary" -Token $OperatorToken
+if ($billingStats -and $billingStats.ledger.entries -ge 2 -and $billingStats.ledger.net -eq "0.00") {
+    Write-Host "Ledger: entries=$($billingStats.ledger.entries) credited=$($billingStats.ledger.credited) net=$($billingStats.ledger.net)"
+    Add-Pass "billing statistics show a ledger that balances"
+} else {
+    Add-Fail "billing statistics show a ledger that balances"
+}
+
+$trend = Invoke-JsonApi -Url "$BASE_MATCHING/stats/trends?bucket=hour" -Token $OperatorToken
+$starts = @($trend.buckets | ForEach-Object { $_.bucketStart })
+if ($trend -and $trend.bucket -eq "hour" -and $starts.Count -eq 24 -and
+    (@(Compare-Object $starts ($starts | Sort-Object) -SyncWindow 0).Count -eq 0)) {
+    Add-Pass "an hourly trend returns one bucket an hour, quiet ones included"
+} else {
+    Add-Fail "an hourly trend returns one bucket an hour, quiet ones included"
+}
+
+Assert-Status "statistics without a token are refused" 401 (Get-StatusCode -Method GET -Url "$BASE_MATCHING/stats/summary")
+Assert-Status "statistics with the service token are forbidden" 403 (Get-StatusCode -Method GET -Url "$BASE_MATCHING/stats/summary" -Token $InternalToken)
+Write-Host ""
+
 Write-Host "Summary: $PassCount passed, $FailCount failed"
 if ($FailCount -gt 0) {
     exit 1
