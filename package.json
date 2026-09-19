@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.32.1",
   "description": "Neighborhood-level peer-to-peer renewable energy trading platform",
   "scripts": {
-    "build": "pnpm --filter @solar-grid/shared-contracts build && pnpm --filter @solar-grid/shared-utils build && pnpm --filter @solar-grid/nest-common build && pnpm -r --filter \"./apps/*\" build",
+    "build": "pnpm --filter @solar-grid/shared-contracts build && pnpm --filter @solar-grid/shared-utils build && pnpm --filter @solar-grid/nest-common build && pnpm -r --filter \"./apps/*\" build && pnpm --filter @solar-grid/dashboard build",
     "test": "pnpm -r test",
     "test:integration": "pnpm -r --workspace-concurrency=1 --filter \"./apps/*\" test:integration",
     "lint": "eslint .",
@@ -22,7 +22,8 @@
     "prisma:deploy": "pnpm -r --workspace-concurrency=1 --filter \"./apps/*\" prisma:deploy",
     "demo:sh": "bash scripts/demo.sh",
     "demo:ps": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1",
-    "resilience:sh": "bash scripts/resilience.sh"
+    "resilience:sh": "bash scripts/resilience.sh",
+    "dashboard:dev": "pnpm --filter @solar-grid/dashboard dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
