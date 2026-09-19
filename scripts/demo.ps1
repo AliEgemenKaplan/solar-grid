@@ -31,6 +31,16 @@ if (-not $OperatorToken -or -not $InternalToken) {
     exit 1
 }
 
+# Readings and the recorded trade are timestamped as the demo runs, so they
+# land in the dashboard's recent windows rather than on a fixed date.
+function Get-UtcMinutesAgo {
+    param([int]$Minutes)
+    return (Get-Date).ToUniversalTime().AddMinutes(-$Minutes).ToString("yyyy-MM-dd'T'HH:mm:ss'.000Z'")
+}
+$SellerAt = Get-UtcMinutesAgo 2
+$BuyerAt = Get-UtcMinutesAgo 1
+$CompletedAt = Get-UtcMinutesAgo 0
+
 $PassCount = 0
 $FailCount = 0
 
@@ -120,7 +130,7 @@ $sellerReading = @{
     householdId = $SellerId
     productionKwh = 10
     consumptionKwh = 6
-    timestamp = "2026-05-27T10:00:00.000Z"
+    timestamp = $SellerAt
 }
 $sellerResponse = Invoke-JsonApi -Method POST -Url "$BASE_SMART_METER/readings" -Body $sellerReading
 if ($sellerResponse -and $sellerResponse.status -eq "SURPLUS") {
@@ -136,7 +146,7 @@ $buyerReading = @{
     householdId = $BuyerId
     productionKwh = 1
     consumptionKwh = 5
-    timestamp = "2026-05-27T10:01:00.000Z"
+    timestamp = $BuyerAt
 }
 $buyerResponse = Invoke-JsonApi -Method POST -Url "$BASE_SMART_METER/readings" -Body $buyerReading
 if ($buyerResponse -and $buyerResponse.status -eq "DEMAND") {
@@ -216,7 +226,7 @@ $tradeBody = @{
     currency = "TRY"
     idempotencyKey = $idemKey
     correlationId = $CorrelationId
-    completedAt = "2026-05-27T10:20:00.000Z"
+    completedAt = $CompletedAt
 }
 
 # Recording a trade is a service-to-service call.

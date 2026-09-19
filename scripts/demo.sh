@@ -38,6 +38,15 @@ if [ -z "$OPERATOR_TOKEN" ] || [ -z "$INTERNAL_TOKEN" ]; then
   exit 1
 fi
 
+# Readings and the recorded trade are timestamped as the demo runs, so they
+# land in the dashboard's recent windows rather than on a fixed date.
+utc_minutes_ago() {
+  "$PYTHON_BIN" -c 'import datetime, sys; t = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1])); print(t.strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"
+}
+SELLER_AT="$(utc_minutes_ago 2)"
+BUYER_AT="$(utc_minutes_ago 1)"
+COMPLETED_AT="$(utc_minutes_ago 0)"
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -167,7 +176,7 @@ echo
 echo "3. Seller reading"
 # A surplus of exactly what the buyer needs (4 kWh), so a run leaves no open
 # offer behind to be matched with the next run's buyer.
-seller_body="{\"householdId\":\"$SELLER_ID\",\"productionKwh\":10,\"consumptionKwh\":6,\"timestamp\":\"2026-05-27T10:00:00.000Z\"}"
+seller_body="{\"householdId\":\"$SELLER_ID\",\"productionKwh\":10,\"consumptionKwh\":6,\"timestamp\":\"$SELLER_AT\"}"
 if seller_response="$(request POST "$BASE_SMART_METER/readings" "$seller_body" 2>/dev/null)"; then
   seller_status="$(printf '%s' "$seller_response" | json_value status)"
   seller_surplus="$(printf '%s' "$seller_response" | json_value surplusKwh)"
@@ -179,7 +188,7 @@ fi
 echo
 
 echo "4. Buyer reading"
-buyer_body="{\"householdId\":\"$BUYER_ID\",\"productionKwh\":1,\"consumptionKwh\":5,\"timestamp\":\"2026-05-27T10:01:00.000Z\"}"
+buyer_body="{\"householdId\":\"$BUYER_ID\",\"productionKwh\":1,\"consumptionKwh\":5,\"timestamp\":\"$BUYER_AT\"}"
 if buyer_response="$(request POST "$BASE_SMART_METER/readings" "$buyer_body" 2>/dev/null)"; then
   buyer_status="$(printf '%s' "$buyer_response" | json_value status)"
   buyer_demand="$(printf '%s' "$buyer_response" | json_value demandKwh)"
@@ -249,7 +258,7 @@ echo "8. Billing idempotency"
 idem_key="demo-idem-${RUN_ID}"
 idem_trade_id="TRD-DEMO-${RUN_ID}"
 # Money and energy cross this boundary as decimal strings, not JSON numbers.
-idem_body="{\"tradeId\":\"$idem_trade_id\",\"sellerHouseholdId\":\"$IDEM_SELLER_ID\",\"buyerHouseholdId\":\"$IDEM_BUYER_ID\",\"energyKwh\":\"2.000\",\"pricePerKwh\":\"4.0000\",\"totalAmount\":\"8.00\",\"currency\":\"TRY\",\"idempotencyKey\":\"$idem_key\",\"correlationId\":\"$CORRELATION_ID\",\"completedAt\":\"2026-05-27T10:20:00.000Z\"}"
+idem_body="{\"tradeId\":\"$idem_trade_id\",\"sellerHouseholdId\":\"$IDEM_SELLER_ID\",\"buyerHouseholdId\":\"$IDEM_BUYER_ID\",\"energyKwh\":\"2.000\",\"pricePerKwh\":\"4.0000\",\"totalAmount\":\"8.00\",\"currency\":\"TRY\",\"idempotencyKey\":\"$idem_key\",\"correlationId\":\"$CORRELATION_ID\",\"completedAt\":\"$COMPLETED_AT\"}"
 first_idem="$(request_as "$INTERNAL_TOKEN" POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
 second_idem="$(request_as "$INTERNAL_TOKEN" POST "$BASE_BILLING/trades" "$idem_body" 2>/dev/null || true)"
 duplicate="$(printf '%s' "$second_idem" | json_value duplicate 2>/dev/null || true)"
