@@ -284,10 +284,15 @@ which is how this stack runs; several instances would need a shared store.
 - Helmet sets its standard headers (`X-Content-Type-Options: nosniff`, frame and
   referrer policies, HSTS, and so on) and removes `X-Powered-By`. The content
   security policy is only relaxed while Swagger UI is being served.
-- CORS is **off** by default. The frontend is planned to be served from the
-  same origin as the API, which needs no CORS at all. For local development
-  against a separate dev server, list origins in `CORS_ALLOWED_ORIGINS`. A `*`
-  is ignored with a warning rather than honoured.
+- CORS is **off** in a service started without `CORS_ALLOWED_ORIGINS`. The
+  operator dashboard runs on its own origin and calls the services directly,
+  so the Docker stack sets the variable to the dashboard's origins by default:
+  `http://localhost:8080`, `http://127.0.0.1:8080` and the Vite dev server,
+  `http://localhost:5173`. Origins are always listed explicitly; a `*` is
+  ignored with a warning rather than honoured. Preflights allow `GET` and
+  `POST` with `Authorization`, `Content-Type` and `x-correlation-id`, expose
+  `x-correlation-id`, and never allow credentials: tokens travel in a header,
+  not a cookie. See [dashboard.md](dashboard.md#cors).
 
 ## Calling the API locally
 
@@ -310,14 +315,14 @@ curl -s "http://localhost:3003/matches?status=COMPLETED&limit=10"
 
 ## Configuration
 
-| Variable               | Default                      | Services                |
-| ---------------------- | ---------------------------- | ----------------------- |
-| `OPERATOR_API_TOKEN`   | none; required in production | all                     |
-| `INTERNAL_API_TOKEN`   | none; required in production | trade-matching, billing |
-| `METRICS_TOKEN`        | none; required in production | all                     |
-| `SWAGGER_ENABLED`      | on outside production        | all                     |
-| `CORS_ALLOWED_ORIGINS` | empty                        | all                     |
-| `RATE_LIMIT_ENABLED`   | `true`                       | all                     |
-| `RATE_LIMIT_TTL_MS`    | `60000`                      | all                     |
-| `RATE_LIMIT_MAX`       | `300`                        | all                     |
-| `RATE_LIMIT_WRITE_MAX` | `60`                         | all                     |
+| Variable               | Default                       | Services                |
+| ---------------------- | ----------------------------- | ----------------------- |
+| `OPERATOR_API_TOKEN`   | none; required in production  | all                     |
+| `INTERNAL_API_TOKEN`   | none; required in production  | trade-matching, billing |
+| `METRICS_TOKEN`        | none; required in production  | all                     |
+| `SWAGGER_ENABLED`      | on outside production         | all                     |
+| `CORS_ALLOWED_ORIGINS` | empty; compose: the dashboard | all                     |
+| `RATE_LIMIT_ENABLED`   | `true`                        | all                     |
+| `RATE_LIMIT_TTL_MS`    | `60000`                       | all                     |
+| `RATE_LIMIT_MAX`       | `300`                         | all                     |
+| `RATE_LIMIT_WRITE_MAX` | `60`                          | all                     |

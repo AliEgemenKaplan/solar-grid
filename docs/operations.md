@@ -23,8 +23,10 @@ flowchart LR
   mq -->|healthy| tm
 ```
 
-`docker compose ps -a` shows nine running containers, all `healthy`, and four
-migration jobs that have `Exited (0)`.
+`docker compose ps -a` shows ten running containers, all `healthy`, and four
+migration jobs that have `Exited (0)`. The tenth is the operator dashboard,
+which depends on nothing: it is static files, and the browser calls the
+services itself.
 
 ## Credentials
 
@@ -177,6 +179,11 @@ Every Node container - services and migration jobs - runs with:
 - a read-only root filesystem and a 16 MB `tmpfs` at `/tmp`
 - all Linux capabilities dropped (`CapEff: 0000000000000000`)
 - `no-new-privileges`
+
+The dashboard container is hardened the same way from a different base: the
+unprivileged nginx image runs as uid 101, with a read-only filesystem, an 8 MB
+`/tmp`, no capabilities and no credentials. See
+[dashboard.md](dashboard.md#docker).
 
 PostgreSQL and RabbitMQ keep their images' defaults: their entrypoints need to
 change file ownership and users when a volume is initialised.

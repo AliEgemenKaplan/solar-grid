@@ -11,8 +11,10 @@ Solar Grid is a CENG442 microservice architecture project for neighborhood-level
 | trade-matching-service | 3003         | Consumes RabbitMQ events, creates offers/requests, performs FIFO matching, calls Pricing and Billing |
 | billing-ledger-service | 3004         | Records completed trades, ledger entries, balances, and billing idempotency                          |
 | RabbitMQ               | 5672 / 15672 | Event broker and management UI                                                                       |
+| dashboard              | 8080         | Operator console in the browser: statistics, charts, household activity and service health           |
 
-Each microservice owns a separate PostgreSQL database.
+Each microservice owns a separate PostgreSQL database. The dashboard owns none:
+it reads the services' statistics APIs from the operator's browser.
 
 ## Architecture
 
@@ -181,6 +183,33 @@ curl -s -H "Authorization: Bearer $OPERATOR" "localhost:3003/stats/trends?bucket
 [docs/analytics.md](docs/analytics.md) documents every endpoint, filter and
 limit.
 
+## Operator dashboard
+
+http://localhost:8080, once the stack is up. Sign in with `OPERATOR_API_TOKEN`
+from `infrastructure/.env`.
+
+- Key figures, energy and market trends, the price against its band, matched
+  and unmatched energy, settlement and the ledger, households, and each
+  service's readiness - all read from the statistics API, nothing computed in
+  the browser.
+- 24 hours, 7 days, 30 days or custom dates, in UTC; manual and automatic
+  refresh that never overlaps and keeps the figures on screen while it runs.
+- A service that is down fails only its own panels, with the request's
+  correlation id; an empty window says so instead of drawing an empty chart.
+- React, TypeScript, Vite, Tailwind CSS and Recharts; one typed client for
+  every request; Vitest and Testing Library for the components.
+- The token lives in the tab's session storage, is sent only as a bearer
+  header, and is never shown again after sign-in. The page only runs its own
+  scripts and only talks to the four services.
+- Served as static files by an unprivileged, read-only nginx container.
+
+```bash
+pnpm dashboard:dev     # http://localhost:5173 against the services in Docker
+```
+
+[docs/dashboard.md](docs/dashboard.md) covers the architecture, the session,
+configuration and its limits.
+
 ## Prerequisites
 
 - Docker and Docker Compose v2
@@ -247,8 +276,9 @@ Start (after `pnpm env:init`):
 docker compose -f infrastructure/docker-compose.yml up -d --build --wait
 ```
 
-`docker compose ps -a` then shows nine healthy containers and four migration
-jobs that exited with status 0.
+`docker compose ps -a` then shows ten healthy containers - four services, four
+databases, the broker and the dashboard - and four migration jobs that exited
+with status 0.
 
 Logs:
 
@@ -324,6 +354,7 @@ SolarGrid/
 | [docs/operations.md](docs/operations.md)           | Credentials, database privileges, images, health checks, shutdown, limits         |
 | [docs/observability.md](docs/observability.md)     | Structured logs, correlation ids, metrics                                         |
 | [docs/analytics.md](docs/analytics.md)             | Statistics endpoints, windows, buckets and decimal handling                       |
+| [docs/dashboard.md](docs/dashboard.md)             | The operator dashboard: running it, the session, configuration, limits            |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | From a symptom to its cause and recovery                                          |
 | [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
 | [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |
