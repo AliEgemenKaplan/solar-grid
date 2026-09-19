@@ -194,6 +194,9 @@ never zero. A quiet bucket is zeros because the API says it was zero.
   raw responses, because none reach the browser.
 - **Nothing in the window:** says so ("No trading activity in the selected
   period.") instead of drawing an empty chart.
+- **Something unexpected while rendering:** an error boundary replaces the page
+  with a plain message and a reload button rather than leaving it blank. The
+  error itself stays in the browser's developer tools.
 
 ### Refreshing
 

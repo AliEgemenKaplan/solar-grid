@@ -152,3 +152,20 @@ describe('the operator session', () => {
     );
   });
 });
+
+describe('an unexpected failure while rendering', () => {
+  it('shows a way back instead of a blank page, and not the error', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const api = fakeApi({
+      // A shape the dashboard cannot render: the summary is missing entirely.
+      tradeSummary: vi.fn(async () => ok(undefined)),
+    });
+    renderApp({ api, signedIn: true });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The dashboard hit a problem it could not recover from.',
+    );
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/TypeError|at \w+ \(/);
+  });
+});

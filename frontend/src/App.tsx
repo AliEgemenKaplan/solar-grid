@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './auth/auth-context';
 import type { TokenStore } from './auth/token-store';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { LoginPage } from './pages/LoginPage';
 import { ServicesProvider, type Services } from './services/services-context';
 
@@ -28,10 +29,12 @@ function Gate() {
 
 export function App({ services, tokens }: { services: Services; tokens: TokenStore }) {
   return (
-    <ServicesProvider value={services}>
-      <AuthProvider api={services.api} tokens={tokens}>
-        <Gate />
-      </AuthProvider>
-    </ServicesProvider>
+    <ErrorBoundary>
+      <ServicesProvider value={services}>
+        <AuthProvider api={services.api} tokens={tokens}>
+          <Gate />
+        </AuthProvider>
+      </ServicesProvider>
+    </ErrorBoundary>
   );
 }
