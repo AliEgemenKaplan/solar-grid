@@ -36,6 +36,7 @@ each endpoint is deliberately assigned to one of them.
 | all            | `GET /stats/summary`, `/stats/trends`, `/stats/households`                  | **operator**                   | Aggregates describe the whole neighbourhood's energy and money; see [analytics.md](analytics.md)                     |
 | all            | `GET /health`, `/health/live`, `/health/ready`                              | public, not rate limited       |                                                                                                                      |
 | all            | `GET /metrics`                                                              | **metrics**, not rate limited  | Operational counts; see [observability.md](observability.md#metrics)                                                 |
+| all            | `GET /diagnostics`                                                          | **operator**                   | The same counts as JSON, for the dashboard's System view; see [observability.md](observability.md#metrics)           |
 
 That is every mutation in the system: one public and rate limited, two for
 operators, one for services.

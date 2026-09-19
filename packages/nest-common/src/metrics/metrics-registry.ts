@@ -22,6 +22,32 @@ export type Dependency = 'database' | 'rabbitmq' | 'pricing' | 'billing';
 /** Every metric name starts with this, so they are easy to tell apart from others. */
 export const METRIC_PREFIX = 'solargrid_';
 
+/**
+ * One series of a metric, as the diagnostics endpoint reports it. For a
+ * histogram, `value` is how many observations there were and `sum` their total.
+ */
+export interface DiagnosticSeries {
+  labels: Labels;
+  value: number;
+  sum?: number;
+}
+
+export interface DiagnosticMetric {
+  /** Without the solargrid_ prefix: `messages_total`. */
+  name: string;
+  help: string;
+  type: 'counter' | 'gauge' | 'histogram';
+  series: DiagnosticSeries[];
+}
+
+export interface DiagnosticsSnapshot {
+  service: string;
+  /** When this process started counting: every counter is since then. */
+  countingSince: string;
+  generatedAt: string;
+  metrics: DiagnosticMetric[];
+}
+
 /** From a quick read to a slow write under load; anything longer is an outlier. */
 const HTTP_DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
 
@@ -38,6 +64,8 @@ const HTTP_DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5,
  */
 export class MetricsRegistry {
   readonly registry = new Registry();
+  /** Counters start at zero with the registry, so this is what they count from. */
+  readonly countingSince = new Date();
   private readonly logger = new Logger('Metrics');
   private reportedFailure = false;
 
@@ -152,6 +180,60 @@ export class MetricsRegistry {
 
   async render(): Promise<string> {
     return this.registry.metrics();
+  }
+
+  /**
+   * The same numbers as `render`, as JSON for the operator's diagnostics view.
+   *
+   * Only this service's own metrics, without the service label every series
+   * carries. Histograms are reduced to how many observations there were and
+   * their sum: the buckets are for a monitoring system, not for a person.
+   */
+  async snapshot(): Promise<DiagnosticsSnapshot> {
+    const metrics = await this.registry.getMetricsAsJSON();
+    return {
+      service: this.service,
+      countingSince: this.countingSince.toISOString(),
+      generatedAt: new Date().toISOString(),
+      metrics: metrics
+        .filter((metric) => metric.name.startsWith(METRIC_PREFIX))
+        .map((metric) => {
+          const type = String(metric.type) as DiagnosticMetric['type'];
+          const name = metric.name.slice(METRIC_PREFIX.length);
+          const withoutService = (labels: Partial<Record<string, string | number>>): Labels => {
+            const { service: _service, le: _le, ...rest } = labels;
+            return Object.fromEntries(
+              Object.entries(rest)
+                .filter(([, value]) => value !== undefined)
+                .map(([key, value]) => [key, String(value)]),
+            );
+          };
+          if (type !== 'histogram') {
+            return {
+              name,
+              help: metric.help,
+              type,
+              series: metric.values.map((entry) => ({
+                labels: withoutService(entry.labels),
+                value: entry.value,
+              })),
+            };
+          }
+          // One series per label set: the _count and _sum lines, joined.
+          const series = new Map<string, DiagnosticSeries>();
+          for (const entry of metric.values) {
+            const metricName = (entry as { metricName?: string }).metricName ?? '';
+            if (!metricName.endsWith('_count') && !metricName.endsWith('_sum')) continue;
+            const labels = withoutService(entry.labels);
+            const key = JSON.stringify(labels);
+            const current = series.get(key) ?? { labels, value: 0, sum: 0 };
+            if (metricName.endsWith('_count')) current.value = entry.value;
+            else current.sum = entry.value;
+            series.set(key, current);
+          }
+          return { name, help: metric.help, type, series: [...series.values()] };
+        }),
+    };
   }
 
   private safely(record: () => void): void {

@@ -432,6 +432,54 @@ describe('billing HTTP API', () => {
     });
   });
 
+  /**
+   * The operator dashboard's view of the same counters. /metrics stays the
+   * scraper's; this is the operator's, and it carries counts, never ids.
+   */
+  describe('diagnostics', () => {
+    const diagnostics = (token?: string) => {
+      const req = request(app.getHttpServer()).get('/diagnostics');
+      return token ? req.set('Authorization', `Bearer ${token}`) : req;
+    };
+
+    it('is for the operator only', async () => {
+      expect((await diagnostics()).status).toBe(401);
+      expect((await diagnostics(INTERNAL_TOKEN)).status).toBe(403);
+      expect((await diagnostics(METRICS_TOKEN)).status).toBe(403);
+      expect((await diagnostics(OPERATOR_TOKEN)).status).toBe(200);
+    });
+
+    it('reports what the service did, as JSON counts without identifiers', async () => {
+      const recorded = trade();
+      await post(recorded, INTERNAL_TOKEN).expect(201);
+      await post(recorded, INTERNAL_TOKEN).expect(200);
+
+      const response = await diagnostics(OPERATOR_TOKEN).expect(200);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.body).toMatchObject({
+        service: 'billing-ledger-service',
+        countingSince: expect.any(String),
+        generatedAt: expect.any(String),
+      });
+      const settlements = response.body.metrics.find(
+        (metric: { name: string }) => metric.name === 'settlements_total',
+      );
+      const count = (outcome: string) =>
+        settlements.series.find(
+          (series: { labels: { outcome: string } }) => series.labels.outcome === outcome,
+        )?.value;
+      expect(count('recorded')).toBeGreaterThanOrEqual(1);
+      expect(count('replayed')).toBeGreaterThanOrEqual(1);
+
+      const text = JSON.stringify(response.body);
+      expect(text).not.toContain(recorded.tradeId);
+      expect(text).not.toContain(recorded.correlationId);
+      expect(text).not.toContain(OPERATOR_TOKEN);
+      expect(text).not.toContain(INTERNAL_TOKEN);
+    });
+  });
+
   describe('environment dependent behaviour', () => {
     it('limits the rate of requests and exempts the internal service', async () => {
       const limited = await startApp(databaseUrl, {

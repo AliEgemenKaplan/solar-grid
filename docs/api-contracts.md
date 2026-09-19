@@ -297,6 +297,12 @@ solargrid_http_requests_total{method="GET",route="/matches",status="200",service
 solargrid_messages_total{event_type="EnergyDemandDetected",outcome="processed",service="trade-matching-service"} 7
 ```
 
+### 🔑 GET /diagnostics
+
+The counters `/metrics` exposes, as JSON, for the operator token: every
+counter and gauge since the service started, histograms reduced to a count and
+a sum. See [observability.md](observability.md#the-same-counters-for-the-operator).
+
 ### 🌐 GET /health/ready
 
 ```json

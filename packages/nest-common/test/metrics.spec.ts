@@ -118,3 +118,71 @@ describe('MetricsRegistry', () => {
     expect(sample(await second.render(), 'solargrid_things_total')).toBe(0);
   });
 });
+
+describe('MetricsRegistry.snapshot', () => {
+  it('reports the service’s counters as JSON, without the prefix or the service label', async () => {
+    const metrics = new MetricsRegistry('billing-ledger-service');
+    const settlements = metrics.counter('settlements_total', 'Requests to record a trade.', [
+      'outcome',
+    ]);
+    settlements.inc({ outcome: 'recorded' });
+    settlements.inc({ outcome: 'recorded' });
+    settlements.inc({ outcome: 'replayed' });
+
+    const snapshot = await metrics.snapshot();
+
+    expect(snapshot.service).toBe('billing-ledger-service');
+    expect(Date.parse(snapshot.countingSince)).toBeLessThanOrEqual(
+      Date.parse(snapshot.generatedAt),
+    );
+    const metric = snapshot.metrics.find((entry) => entry.name === 'settlements_total');
+    expect(metric).toMatchObject({ type: 'counter', help: 'Requests to record a trade.' });
+    expect(metric?.series).toEqual(
+      expect.arrayContaining([
+        { labels: { outcome: 'recorded' }, value: 2 },
+        { labels: { outcome: 'replayed' }, value: 1 },
+      ]),
+    );
+    const labels = snapshot.metrics.flatMap((entry) => entry.series.map((series) => series.labels));
+    expect(labels.every((set) => !('service' in set))).toBe(true);
+  });
+
+  it('reduces a histogram to a count and a sum per label set', async () => {
+    const metrics = new MetricsRegistry('svc');
+    const request = {
+      method: 'GET',
+      route: '/stats/summary',
+      path: '/stats/summary',
+      statusCode: 200,
+      durationMs: 20,
+      aborted: false,
+    };
+    metrics.observeRequest(request);
+    metrics.observeRequest({ ...request, durationMs: 40 });
+
+    const snapshot = await metrics.snapshot();
+    const duration = snapshot.metrics.find(
+      (entry) => entry.name === 'http_request_duration_seconds',
+    );
+
+    expect(duration?.type).toBe('histogram');
+    expect(duration?.series).toHaveLength(1);
+    expect(duration?.series[0]?.labels).toEqual({ method: 'GET', route: '/stats/summary' });
+    expect(duration?.series[0]?.value).toBe(2);
+    expect(duration?.series[0]?.sum).toBeCloseTo(0.06);
+  });
+
+  it('keeps gauges read from elsewhere, and only this service’s own metrics', async () => {
+    const metrics = new MetricsRegistry('svc');
+    metrics.gauge('outbox_events_pending', 'Pending events.', [], async (set) => set({}, 3));
+    metrics.dependencyStatus('database', true);
+
+    const snapshot = await metrics.snapshot();
+
+    expect(snapshot.metrics.find((entry) => entry.name === 'outbox_events_pending')).toMatchObject({
+      type: 'gauge',
+      series: [{ labels: {}, value: 3 }],
+    });
+    expect(snapshot.metrics.every((entry) => !entry.name.startsWith('solargrid_'))).toBe(true);
+  });
+});

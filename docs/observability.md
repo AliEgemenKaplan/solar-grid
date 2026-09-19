@@ -211,6 +211,38 @@ their last value.
 Recording a metric never fails the operation it measures: every write is
 wrapped, and the first failure is logged as `metrics.record_failed`.
 
+### The same counters, for the operator
+
+`GET /diagnostics` on every service returns the same counters as JSON, to a
+caller holding the **operator** token, for the operator dashboard's System
+view. `/metrics` stays with the metrics token: a scraper still cannot read
+anything else, and the operator - who can already read every statistic - does
+not need the scraper's token to see how the services are doing.
+
+```json
+{
+  "service": "trade-matching-service",
+  "countingSince": "2026-09-19T13:38:02.000Z",
+  "generatedAt": "2026-09-19T14:02:11.000Z",
+  "metrics": [
+    {
+      "name": "messages_total",
+      "help": "Energy events handled, by event type and outcome.",
+      "type": "counter",
+      "series": [
+        { "labels": { "event_type": "EnergySurplusDetected", "outcome": "processed" }, "value": 12 }
+      ]
+    }
+  ]
+}
+```
+
+Names lose the `solargrid_` prefix and series lose the `service` label.
+Histograms are reduced to how many observations there were (`value`) and their
+total (`sum`). The labels are the same bounded ones as above: never an
+identifier, a payload or a secret. Every counter starts from zero when the
+service starts, so `countingSince` says what they count from.
+
 ### Scraping them
 
 Any Prometheus-compatible scraper works. With Prometheus itself, not included
