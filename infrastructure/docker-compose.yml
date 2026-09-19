@@ -12,8 +12,11 @@ x-http-platform: &http-platform
   # Off unless asked for: this stack runs with NODE_ENV=production. Set
   # SWAGGER_ENABLED=true in infrastructure/.env to browse the API locally.
   SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
-  # Empty means same origin only. List origins explicitly; "*" is ignored.
-  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  # Browser origins allowed to call the API. The operator dashboard runs on its
+  # own origin (http://localhost:8080, or the Vite dev server on 5173) and
+  # calls each service directly, so those are allowed unless CORS_ALLOWED_ORIGINS
+  # names others. Always explicit origins; "*" is ignored by the services.
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:${DASHBOARD_PORT:-8080},http://127.0.0.1:${DASHBOARD_PORT:-8080},http://localhost:5173}
   RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
   RATE_LIMIT_TTL_MS: ${RATE_LIMIT_TTL_MS:-60000}
   RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
@@ -336,6 +339,46 @@ services:
         condition: service_healthy
       billing-ledger-service:
         condition: service_healthy
+
+  # The operator dashboard: static files, served by an unprivileged nginx. The
+  # browser calls the four services directly on the ports above, so the build
+  # is given those addresses; the operator types their token at sign-in, and
+  # no credential of any kind reaches this container.
+  dashboard:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      target: runtime
+      args:
+        VITE_SMART_METER_API_URL: http://localhost:${SMART_METER_PORT:-3001}
+        VITE_PRICING_API_URL: http://localhost:${PRICING_PORT:-3002}
+        VITE_TRADE_MATCHING_API_URL: http://localhost:${TRADE_MATCHING_PORT:-3003}
+        VITE_BILLING_API_URL: http://localhost:${BILLING_PORT:-3004}
+    container_name: solar-grid-dashboard
+    ports:
+      - '127.0.0.1:${DASHBOARD_PORT:-8080}:8080'
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:8080/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 64M
+        reservations:
+          memory: 16M
 
 volumes:
   rabbitmq_data:

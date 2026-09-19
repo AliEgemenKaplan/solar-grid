@@ -5,8 +5,11 @@
 **/coverage
 **/*.tsbuildinfo
 
-# Secrets and logs
+# Secrets and logs. A local .env.production could otherwise end up in the
+# dashboard build, where Vite compiles every VITE_ value into the bundle.
 **/.env
+**/.env.*
+!**/.env.example
 **/*.log
 
 # Not needed to build or run a service

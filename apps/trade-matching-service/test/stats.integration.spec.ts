@@ -13,6 +13,7 @@ jest.setTimeout(300_000);
 const OPERATOR_TOKEN = 'test-operator-token-0123456789abcdef0123';
 const INTERNAL_TOKEN = 'test-internal-token-0123456789abcdef0123';
 const ORIGINAL_ENV = { ...process.env };
+const DASHBOARD_ORIGIN = 'http://localhost:8080';
 
 @Module({
   imports: [
@@ -69,6 +70,8 @@ describe('trade-matching statistics', () => {
       OPERATOR_API_TOKEN: OPERATOR_TOKEN,
       INTERNAL_API_TOKEN: INTERNAL_TOKEN,
       RATE_LIMIT_ENABLED: 'false',
+      // As the Docker stack runs it: the operator dashboard's origin only.
+      CORS_ALLOWED_ORIGINS: DASHBOARD_ORIGIN,
     };
 
     const moduleRef = await Test.createTestingModule({ imports: [StatsOnlyModule] }).compile();
@@ -274,6 +277,56 @@ describe('trade-matching statistics', () => {
       expect(body.correlationId).toBe('stats-refusal');
       expect(body).not.toHaveProperty('stack');
       expect(JSON.stringify(body)).not.toMatch(/prisma|postgres|SELECT/i);
+    });
+  });
+
+  /**
+   * The dashboard is a browser app on its own origin, so every statistics
+   * request it makes is cross-origin and carries the operator token in a
+   * header. The browser asks first; the answer has to allow exactly that.
+   */
+  describe('from the operator dashboard in a browser', () => {
+    it('allows the preflight for an authenticated request from the dashboard', async () => {
+      const response = await request(app.getHttpServer())
+        .options('/stats/summary')
+        .set('Origin', DASHBOARD_ORIGIN)
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization,x-correlation-id')
+        .expect(204);
+
+      expect(response.headers['access-control-allow-origin']).toBe(DASHBOARD_ORIGIN);
+      expect(response.headers['access-control-allow-headers']).toMatch(/Authorization/);
+      expect(response.headers['access-control-allow-headers']).toMatch(/x-correlation-id/);
+      // Tokens travel in a header, never as cookies.
+      expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+    });
+
+    it('lets the dashboard read the answer and its correlation id', async () => {
+      const response = await get('/stats/summary').set('Origin', DASHBOARD_ORIGIN).expect(200);
+
+      expect(response.headers['access-control-allow-origin']).toBe(DASHBOARD_ORIGIN);
+      expect(response.headers['access-control-expose-headers']).toMatch(/x-correlation-id/);
+    });
+
+    it('lets the dashboard read a refusal, so it can sign the operator out', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/stats/summary')
+        .set('Origin', DASHBOARD_ORIGIN)
+        .expect(401);
+
+      expect(response.headers['access-control-allow-origin']).toBe(DASHBOARD_ORIGIN);
+    });
+
+    it('gives any other origin nothing it could read', async () => {
+      const preflight = await request(app.getHttpServer())
+        .options('/stats/summary')
+        .set('Origin', 'http://evil.example')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'authorization');
+      const answer = await get('/stats/summary').set('Origin', 'http://evil.example');
+
+      expect(preflight.headers['access-control-allow-origin']).toBeUndefined();
+      expect(answer.headers['access-control-allow-origin']).toBeUndefined();
     });
   });
 
