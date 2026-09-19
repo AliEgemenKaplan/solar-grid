@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
@@ -28,6 +29,23 @@ export default tseslint.config(
         },
       ],
     },
+  },
+  {
+    // The operator dashboard runs in a browser, and React's rules of hooks are
+    // the ones most worth a machine checking.
+    files: ['frontend/**/*.{ts,tsx}'],
+    ...reactHooks.configs.flat.recommended,
+    languageOptions: { globals: { ...globals.browser } },
+    rules: {
+      ...reactHooks.configs.flat.recommended.rules,
+      // Nothing in the dashboard writes to the console: a stray log is how a
+      // token ends up somewhere it should not be.
+      'no-console': 'error',
+    },
+  },
+  {
+    files: ['frontend/vite.config.ts', 'frontend/vitest.config.ts'],
+    languageOptions: { globals: { ...globals.node } },
   },
   {
     // Test doubles stand in for Prisma clients and HTTP clients; typing them
