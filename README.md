@@ -11,7 +11,7 @@ Solar Grid is a CENG442 microservice architecture project for neighborhood-level
 | trade-matching-service | 3003         | Consumes RabbitMQ events, creates offers/requests, performs FIFO matching, calls Pricing and Billing |
 | billing-ledger-service | 3004         | Records completed trades, ledger entries, balances, and billing idempotency                          |
 | RabbitMQ               | 5672 / 15672 | Event broker and management UI                                                                       |
-| dashboard              | 8080         | Operator console in the browser: statistics, charts, household activity and service health           |
+| dashboard              | 8080         | Operator control center: system status, energy, market, trading, billing, households, service health |
 
 Each microservice owns a separate PostgreSQL database. The dashboard owns none:
 it reads the services' statistics APIs from the operator's browser.
@@ -183,21 +183,29 @@ curl -s -H "Authorization: Bearer $OPERATOR" "localhost:3003/stats/trends?bucket
 [docs/analytics.md](docs/analytics.md) documents every endpoint, filter and
 limit.
 
-## Operator dashboard
+## Operator control center
 
 http://localhost:8080, once the stack is up. Sign in with `OPERATOR_API_TOKEN`
 from `infrastructure/.env`.
 
-- Key figures, energy and market trends, the price against its band, matched
-  and unmatched energy, settlement and the ledger, households, and each
-  service's readiness - all read from the statistics API, nothing computed in
-  the browser.
-- 24 hours, 7 days, 30 days or custom dates, in UTC; manual and automatic
-  refresh that never overlaps and keeps the figures on screen while it runs.
-- A service that is down fails only its own panels, with the request's
-  correlation id; an empty window says so instead of drawing an empty chart.
+- Seven pages - Overview, Energy, Market, Trading, Billing, Households and
+  System health - each opening with the question it answers.
+- The overview says first whether everything works ("All systems
+  operational", "System degraded", "System unavailable") and lists what needs
+  attention in plain words, with what it means and where to look.
+- The grid in four figures, the energy flow from panels to market to use, the
+  price between its floor and ceiling, how every trade ended, and whether the
+  books balance - all as the services reported them, nothing made up.
+- Charts with one axis each, a legend, exact tooltips and a table twin;
+  24 hours, 7 days, 30 days or custom dates, in UTC; refresh that never
+  overlaps, pauses in a hidden tab and says how old the figures are.
+- Households: rankings, searchable lists and a detail panel per household.
+- System health: every service's state and dependencies, the path of a meter
+  event through the broker, and each service's own counters from its
+  operator-only `GET /diagnostics` - without exposing the broker's management
+  interface or any credential.
 - React, TypeScript, Vite, Tailwind CSS and Recharts; one typed client for
-  every request; Vitest and Testing Library for the components.
+  every request; Vitest, Testing Library and axe-core in the tests.
 - The token lives in the tab's session storage, is sent only as a bearer
   header, and is never shown again after sign-in. The page only runs its own
   scripts and only talks to the four services.
@@ -354,7 +362,7 @@ SolarGrid/
 | [docs/operations.md](docs/operations.md)           | Credentials, database privileges, images, health checks, shutdown, limits         |
 | [docs/observability.md](docs/observability.md)     | Structured logs, correlation ids, metrics                                         |
 | [docs/analytics.md](docs/analytics.md)             | Statistics endpoints, windows, buckets and decimal handling                       |
-| [docs/dashboard.md](docs/dashboard.md)             | The operator dashboard: running it, the session, configuration, limits            |
+| [docs/dashboard.md](docs/dashboard.md)             | The operator control center: pages, the session, configuration, limits            |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | From a symptom to its cause and recovery                                          |
 | [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
 | [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |

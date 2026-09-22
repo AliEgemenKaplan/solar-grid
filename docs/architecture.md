@@ -22,12 +22,13 @@ Subscribes to RabbitMQ energy events. When a surplus event arrives it creates a 
 
 The financial record keeper. Accepts completed trade notifications and records them in an immutable ledger (CREDIT for seller, DEBIT for buyer). Updates household balances atomically using a database transaction. Uses idempotency keys to prevent duplicate ledger entries on retries.
 
-### 5. Operator dashboard (port 8080)
+### 5. Operator control center (port 8080)
 
 A React application served as static files. It owns no data and no service
-depends on it: the operator's browser calls each service's statistics and
-readiness endpoints directly, with the operator token, and composes the
-answers. It only reads. See [dashboard.md](dashboard.md).
+depends on it: the operator's browser calls each service's statistics,
+diagnostics and readiness endpoints directly, with the operator token, and
+composes the answers into seven pages, from system status to each service's
+own counters. It only reads. See [dashboard.md](dashboard.md).
 
 ## Data Ownership
 
