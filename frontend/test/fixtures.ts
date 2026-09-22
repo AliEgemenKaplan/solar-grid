@@ -5,11 +5,16 @@ import { ApiError, type ApiErrorKind } from '../src/services/api-error';
 import type { SolarGridApi } from '../src/services/solar-grid-api';
 import type {
   BillingSummary,
+  BillingTrendBucket,
   CurrentPrice,
+  DiagnosticMetric,
+  DiagnosticsSnapshot,
   EnergySummary,
   EnergyTrendBucket,
+  HouseholdBalance,
   HouseholdBilling,
   HouseholdEnergy,
+  HouseholdStatus,
   HouseholdTrading,
   Page,
   PriceSummary,
@@ -244,6 +249,34 @@ export const billingSummary: BillingSummary = {
   },
 };
 
+export const billingTrend: Trend<BillingTrendBucket> = {
+  range: RANGE,
+  bucket: 'hour',
+  buckets: [
+    {
+      bucketStart: '2026-09-19T09:00:00.000Z',
+      trades: 1,
+      energyKwh: '10.000',
+      volume: '40.00',
+      averagePricePerKwh: '4.0000',
+    },
+    {
+      bucketStart: '2026-09-19T10:00:00.000Z',
+      trades: 0,
+      energyKwh: '0.000',
+      volume: '0.00',
+      averagePricePerKwh: null,
+    },
+    {
+      bucketStart: '2026-09-19T11:00:00.000Z',
+      trades: 1,
+      energyKwh: '5.000',
+      volume: '25.00',
+      averagePricePerKwh: '5.0000',
+    },
+  ],
+};
+
 export function page<T>(items: T[], total = items.length, pageNumber = 1, limit = 10): Page<T> {
   return { items, page: pageNumber, limit, total };
 }
@@ -315,6 +348,114 @@ export function readiness(
   };
 }
 
+const counter = (
+  name: string,
+  series: Array<[Record<string, string>, number]>,
+  type: DiagnosticMetric['type'] = 'counter',
+): DiagnosticMetric => ({
+  name,
+  help: name,
+  type,
+  series: series.map(([labels, value]) => ({ labels, value })),
+});
+
+const httpMetrics = (ok200: number, refused: number, failed: number): DiagnosticMetric[] => [
+  counter('http_requests_total', [
+    [{ method: 'GET', route: '/stats/summary', status: '200' }, ok200],
+    [{ method: 'GET', route: '/stats/summary', status: '400' }, refused],
+    [{ method: 'GET', route: '/stats/summary', status: '500' }, failed],
+  ]),
+  {
+    name: 'http_request_duration_seconds',
+    help: 'duration',
+    type: 'histogram',
+    // 100 requests taking 1.2 s together: 12 ms on average.
+    series: [{ labels: { method: 'GET', route: '/stats/summary' }, value: 100, sum: 1.2 }],
+  },
+];
+
+/** Each service's counters, as GET /diagnostics returns them. */
+export const diagnosticsSnapshots: Record<string, DiagnosticsSnapshot> = {
+  smartMeter: {
+    service: 'smart-meter-service',
+    countingSince: '2026-09-19T08:00:00.000Z',
+    generatedAt: '2026-09-19T12:00:00.000Z',
+    metrics: [
+      ...httpMetrics(98, 2, 0),
+      counter('readings_total', [
+        [{ result: 'created' }, 240],
+        [{ result: 'duplicate' }, 3],
+      ]),
+      counter('outbox_events_created_total', [[{ event_type: 'energy.surplus' }, 240]]),
+      counter('outbox_events_published_total', [[{ event_type: 'energy.surplus' }, 238]]),
+      counter('outbox_publish_failures_total', [[{}, 1]]),
+      counter('outbox_events_pending', [[{}, 2]], 'gauge'),
+      counter('dependency_failures_total', []),
+    ],
+  },
+  pricing: {
+    service: 'pricing-engine-service',
+    countingSince: '2026-09-19T08:00:00.000Z',
+    generatedAt: '2026-09-19T12:00:00.000Z',
+    metrics: [...httpMetrics(100, 0, 0), counter('price_recalculations_total', [[{}, 36]])],
+  },
+  tradeMatching: {
+    service: 'trade-matching-service',
+    countingSince: '2026-09-19T08:00:00.000Z',
+    generatedAt: '2026-09-19T12:00:00.000Z',
+    metrics: [
+      ...httpMetrics(97, 1, 2),
+      counter('messages_total', [
+        [{ event_type: 'energy.surplus', outcome: 'processed' }, 200],
+        [{ event_type: 'energy.demand', outcome: 'processed' }, 38],
+        [{ event_type: 'energy.surplus', outcome: 'duplicate' }, 3],
+        [{ event_type: 'energy.surplus', outcome: 'retry_scheduled' }, 2],
+      ]),
+      counter('matching_runs_total', [
+        [{ outcome: 'completed' }, 30],
+        [{ outcome: 'pricing_unavailable' }, 1],
+      ]),
+      counter('trades_reserved_total', [[{}, 4]]),
+      counter('trade_billing_outcomes_total', [
+        [{ outcome: 'settled' }, 2],
+        [{ outcome: 'rejected' }, 1],
+      ]),
+      counter('offers_open', [[{}, 1]], 'gauge'),
+      counter('requests_open', [[{}, 0]], 'gauge'),
+      counter('trades_pending_billing', [[{}, 1]], 'gauge'),
+      counter('dependency_failures_total', [[{ dependency: 'billing' }, 1]]),
+    ],
+  },
+  billing: {
+    service: 'billing-ledger-service',
+    countingSince: '2026-09-19T08:00:00.000Z',
+    generatedAt: '2026-09-19T12:00:00.000Z',
+    metrics: [
+      ...httpMetrics(100, 0, 0),
+      counter('settlements_total', [
+        [{ outcome: 'recorded' }, 2],
+        [{ outcome: 'replayed' }, 1],
+      ]),
+    ],
+  },
+};
+
+export const householdStatus = (householdId: string): HouseholdStatus => ({
+  householdId,
+  currentStatus: 'SURPLUS',
+  currentSurplusKwh: '2.500',
+  currentDemandKwh: '0.000',
+  lastReadingAt: '2026-09-19T11:00:00.000Z',
+  updatedAt: '2026-09-19T11:00:01.000Z',
+});
+
+export const householdBalance = (householdId: string): HouseholdBalance => ({
+  householdId,
+  balance: '40.00',
+  currency: 'TRY',
+  updatedAt: '2026-09-19T09:30:00.000Z',
+});
+
 /** Every endpoint answering with the shapes above; override any of them per test. */
 export function fakeApi(overrides: Partial<Record<keyof SolarGridApi, unknown>> = {}) {
   const api = {
@@ -328,7 +469,7 @@ export function fakeApi(overrides: Partial<Record<keyof SolarGridApi, unknown>> 
     tradeTrend: vi.fn(async () => ok(tradeTrend)),
     tradeHouseholds: vi.fn(async () => ok(page(tradingHouseholds))),
     billingSummary: vi.fn(async () => ok(billingSummary)),
-    billingTrend: vi.fn(async () => ok({ range: RANGE, bucket: 'hour', buckets: [] })),
+    billingTrend: vi.fn(async () => ok(billingTrend)),
     billingHouseholds: vi.fn(async () => ok(page(billingHouseholds))),
     readiness: vi.fn(async (service: string) => ({
       report: readiness(service),
@@ -336,6 +477,9 @@ export function fakeApi(overrides: Partial<Record<keyof SolarGridApi, unknown>> 
       latencyMs: 7,
       error: null,
     })),
+    diagnostics: vi.fn(async (service: string) => ok(diagnosticsSnapshots[service]!)),
+    householdStatus: vi.fn(async (householdId: string) => householdStatus(householdId)),
+    householdBalance: vi.fn(async (householdId: string) => householdBalance(householdId)),
     verifyOperatorToken: vi.fn(async () => ok({})),
     ...overrides,
   };

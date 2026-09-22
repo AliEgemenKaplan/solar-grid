@@ -3,10 +3,13 @@ import type {
   BillingSummary,
   BillingTrendBucket,
   CurrentPrice,
+  DiagnosticsSnapshot,
   EnergySummary,
   EnergyTrendBucket,
+  HouseholdBalance,
   HouseholdBilling,
   HouseholdEnergy,
+  HouseholdStatus,
   HouseholdTrading,
   Page,
   PriceSummary,
@@ -104,6 +107,39 @@ export function createSolarGridApi(client: ApiClient) {
         query: { ...query },
         signal,
       }),
+
+    /** A service's own counters since it started; operator only. */
+    diagnostics: (service: ServiceName, signal?: AbortSignal) =>
+      client.get<DiagnosticsSnapshot>(service, '/diagnostics', { signal }),
+
+    /**
+     * One household's latest reading. Public, and 404 for a household that has
+     * never reported, which is an answer rather than a failure.
+     */
+    householdStatus: async (householdId: string, signal?: AbortSignal) => {
+      try {
+        return (
+          await client.get<HouseholdStatus>(
+            'smartMeter',
+            `/households/${encodeURIComponent(householdId)}/status`,
+            { authenticated: false, signal },
+          )
+        ).data;
+      } catch (error) {
+        if (error instanceof ApiError && error.details.status === 404) return null;
+        throw error;
+      }
+    },
+
+    /** One household's balance now. Public; zero for a household that never traded. */
+    householdBalance: async (householdId: string, signal?: AbortSignal) =>
+      (
+        await client.get<HouseholdBalance>(
+          'billing',
+          `/balances/${encodeURIComponent(householdId)}`,
+          { authenticated: false, signal },
+        )
+      ).data,
 
     /**
      * Readiness is public and answers 503 with a report when a service is up

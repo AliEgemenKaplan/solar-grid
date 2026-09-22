@@ -9,4 +9,6 @@ import { afterEach } from 'vitest';
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  // The page lives in the address; every test starts on the overview.
+  window.history.replaceState(null, '', '/');
 });

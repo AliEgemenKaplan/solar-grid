@@ -98,3 +98,73 @@ export function GridMark({ size = 28 }: { size?: number }) {
     </svg>
   );
 }
+
+export const OverviewIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+  </Icon>
+);
+
+export const EnergyIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M9 1.8L3.5 9h4l-1 5.2L12.5 7h-4z" />
+  </Icon>
+);
+
+export const MarketIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M2.5 13.5h11" />
+    <path d="M4 11V8M7 11V5M10 11V7M13 11V3.5" />
+  </Icon>
+);
+
+export const TradingIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M2.5 5.5h10l-2.5-2.5" />
+    <path d="M13.5 10.5h-10l2.5 2.5" />
+  </Icon>
+);
+
+export const BillingIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M3.5 1.8h9v12.4l-2.2-1.4-2.3 1.4-2.3-1.4-2.2 1.4z" />
+    <path d="M6 5.5h4M6 8h4" />
+  </Icon>
+);
+
+export const HouseholdIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M2.5 7.5L8 2.8l5.5 4.7" />
+    <path d="M4 6.5v7h8v-7" />
+    <path d="M6.8 13.5v-3.5h2.4v3.5" />
+  </Icon>
+);
+
+export const SystemIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M1.8 8.5h2.7l1.6-4 2.6 8 1.8-5 1 1h2.7" />
+  </Icon>
+);
+
+export const ArrowRightIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M3 8h9.5M9 4.5L12.5 8 9 11.5" />
+  </Icon>
+);
+
+export const CloseIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <path d="M4 4l8 8M12 4l-8 8" />
+  </Icon>
+);
+
+export const QuestionIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <circle cx="8" cy="8" r="6.25" />
+    <path d="M6.3 6.2a1.8 1.8 0 1 1 2.6 1.6c-.6.3-.9.7-.9 1.3v.3" />
+    <path d="M8 11.4v.1" />
+  </Icon>
+);

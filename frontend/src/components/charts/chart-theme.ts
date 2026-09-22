@@ -9,6 +9,7 @@ export const SERIES = {
   traded: 'var(--color-traded)',
   volume: 'var(--color-volume)',
   price: 'var(--color-price)',
+  deficit: 'var(--color-deficit)',
 } as const;
 
 export const CHROME = {
@@ -19,7 +20,7 @@ export const CHROME = {
   crosshair: 'var(--color-ink-3)',
 } as const;
 
-export const AXIS_TICK = { fill: CHROME.tick, fontSize: 11 } as const;
+export const AXIS_TICK = { fill: CHROME.tick, fontSize: 12 } as const;
 
 /** Thin and round-ended, drawn once: no entrance animation on every refresh. */
 export const LINE = { strokeWidth: 2, isAnimationActive: false, strokeLinecap: 'round' } as const;
@@ -47,5 +48,13 @@ export function sparseDots(pointsWithValues: number, color: string) {
     : false;
 }
 
-/** Room reserved at the right of a chart so the last tick label is not clipped. */
-export const CHART_MARGIN = { top: 8, right: 12, bottom: 0, left: 0 } as const;
+/**
+ * Room reserved around the plot: at the top for the unit above the value
+ * axis, at the right so the last tick label is not clipped.
+ */
+export const CHART_MARGIN = { top: 28, right: 12, bottom: 0, left: 0 } as const;
+
+/** The unit of the value axis, written above it rather than over its top tick. */
+export function unitLabel(unit: string) {
+  return { value: unit, position: 'top' as const, offset: 14, fill: CHROME.tick, fontSize: 12 };
+}

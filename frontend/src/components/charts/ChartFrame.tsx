@@ -64,14 +64,13 @@ export function ChartFrame({
           className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-raised hover:text-ink"
         >
           {asTable ? <ChartIcon /> : <TableIcon />}
-          {asTable ? 'Show chart' : 'Show table'}
-          <span className="sr-only"> for {label}</span>
+          {asTable ? 'Show chart' : 'Show table'} <span className="sr-only">for {label}</span>
         </button>
       </div>
 
       {asTable ? (
-        <div id={tableId} className="max-h-80 overflow-auto rounded-md border border-line">
-          <table className="figures w-full min-w-[32rem] border-collapse text-xs">
+        <div id={tableId} className="relative max-h-80 overflow-auto rounded-md border border-line">
+          <table className="figures w-full min-w-[32rem] border-collapse text-[13px] whitespace-nowrap">
             <caption className="sr-only">{label}</caption>
             <thead className="sticky top-0 bg-raised">
               <tr>

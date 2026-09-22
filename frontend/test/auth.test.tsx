@@ -21,13 +21,11 @@ describe('operator sign-in', () => {
     expect(await screen.findAllByText('Ready')).toHaveLength(4);
   });
 
-  it('checks the token with the backend and opens the dashboard', async () => {
+  it('checks the token with the backend and opens the control center', async () => {
     const { api, tokens } = renderApp();
     await signIn(OPERATOR_TOKEN);
 
-    expect(
-      await screen.findByRole('heading', { name: 'Solar Grid operator dashboard' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument();
     expect(api.verifyOperatorToken).toHaveBeenCalledWith(
       'tradeMatching',
       OPERATOR_TOKEN,
@@ -40,7 +38,7 @@ describe('operator sign-in', () => {
   it('never shows the token once it has been accepted', async () => {
     const { container } = renderApp();
     await signIn(OPERATOR_TOKEN);
-    await screen.findByRole('heading', { name: 'Solar Grid operator dashboard' });
+    await screen.findByRole('heading', { level: 1, name: 'Overview' });
 
     expect(container.innerHTML).not.toContain(OPERATOR_TOKEN);
     expect(document.body.innerHTML).not.toContain(OPERATOR_TOKEN);
@@ -69,9 +67,7 @@ describe('operator sign-in', () => {
     expect(api.verifyOperatorToken).not.toHaveBeenCalled();
 
     await user.type(tokenField(), `${OPERATOR_TOKEN}{Enter}`);
-    expect(
-      await screen.findByRole('heading', { name: 'Solar Grid operator dashboard' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument();
   });
 
   it('refuses a token that belongs to another role', async () => {
@@ -89,7 +85,7 @@ describe('operator sign-in', () => {
     renderApp({ api: fakeApi({ verifyOperatorToken: verify }) });
     await signIn(OPERATOR_TOKEN);
 
-    await screen.findByRole('heading', { name: 'Solar Grid operator dashboard' });
+    await screen.findByRole('heading', { level: 1, name: 'Overview' });
     expect(verify.mock.calls.map((call) => call[0])).toEqual(['tradeMatching', 'billing']);
   });
 
@@ -110,7 +106,7 @@ describe('the operator session', () => {
   it('signs out and forgets the token', async () => {
     const user = userEvent.setup();
     const { tokens } = renderApp({ signedIn: true });
-    await screen.findByRole('heading', { name: 'Solar Grid operator dashboard' });
+    await screen.findByRole('heading', { level: 1, name: 'Overview' });
 
     await user.click(screen.getByRole('button', { name: 'Sign out' }));
 
@@ -146,9 +142,7 @@ describe('the operator session', () => {
     renderApp();
 
     await waitFor(() =>
-      expect(
-        screen.getByRole('heading', { name: 'Solar Grid operator dashboard' }),
-      ).toBeInTheDocument(),
+      expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument(),
     );
   });
 });
@@ -157,8 +151,8 @@ describe('an unexpected failure while rendering', () => {
   it('shows a way back instead of a blank page, and not the error', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const api = fakeApi({
-      // A shape the dashboard cannot render: the summary is missing entirely.
-      tradeSummary: vi.fn(async () => ok(undefined)),
+      // A shape the dashboard cannot render: a summary with none of its fields.
+      tradeSummary: vi.fn(async () => ok({})),
     });
     renderApp({ api, signedIn: true });
 

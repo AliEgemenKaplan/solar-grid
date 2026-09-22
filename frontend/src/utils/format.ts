@@ -106,3 +106,50 @@ export function formatLatency(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return MISSING;
   return `${ms} ms`;
 }
+
+/** "just now", "12 s ago", "4 min ago": how old a figure is, for the freshness line. */
+export function formatAgo(value: Date, now: Date): string {
+  const seconds = Math.max(0, Math.round((now.getTime() - value.getTime()) / 1000));
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds} s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  return `${Math.floor(minutes / 60)} h ago`;
+}
+
+/** A percentage of a count, for proportions of whole things such as trades. */
+export function formatShare(part: number, whole: number): string {
+  if (whole <= 0) return MISSING;
+  const share = (part / whole) * 100;
+  return `${share < 10 && share > 0 ? share.toFixed(1) : Math.round(share)}%`;
+}
+
+/**
+ * The exact sum of decimal strings, at the largest scale among them:
+ * "10.000" + "0.500" = "10.500". Done on scaled integers (BigInt), so it is
+ * as exact as the strings themselves - never a binary floating point sum.
+ * Used for what no service reports directly, such as the energy one household
+ * both sold and bought; everything the API adds up, it adds up itself.
+ */
+export function sumDecimals(...values: Decimal[]): Decimal {
+  const parsed = values.map((value) => {
+    const match = DECIMAL.exec(value.trim());
+    if (!match) throw new Error(`Not a decimal: ${value}`);
+    const [, sign, whole, fraction = ''] = match;
+    return {
+      negative: sign === '-',
+      digits: whole! + fraction.slice(1),
+      scale: Math.max(0, fraction.length - 1),
+    };
+  });
+  const scale = Math.max(0, ...parsed.map((value) => value.scale));
+  const total = parsed.reduce((sum, value) => {
+    const scaled = BigInt(value.digits + '0'.repeat(scale - value.scale));
+    return sum + (value.negative ? -scaled : scaled);
+  }, 0n);
+  const negative = total < 0n;
+  const digits = (negative ? -total : total).toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  const fraction = scale > 0 ? `.${digits.slice(digits.length - scale)}` : '';
+  return `${negative ? '-' : ''}${whole}${fraction}`;
+}

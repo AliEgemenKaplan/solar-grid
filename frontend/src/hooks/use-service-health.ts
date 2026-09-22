@@ -3,16 +3,9 @@ import type { ReadinessResult } from '../services/solar-grid-api';
 import { useServices } from '../services/services-context';
 import { useResource, type Resource } from './use-resource';
 
+export { healthState, type HealthState } from '../utils/system-status';
+
 export type ServiceHealth = Record<ServiceName, ReadinessResult & { checkedAt: Date }>;
-
-export type HealthState = 'ready' | 'degraded' | 'unreachable';
-
-/** Ready, up but not ready, or no answer at all. */
-export function healthState(result: ReadinessResult): HealthState {
-  if (result.report?.status === 'ready') return 'ready';
-  if (result.report) return 'degraded';
-  return 'unreachable';
-}
 
 /**
  * Readiness of all four services, from their public /health/ready. Only the

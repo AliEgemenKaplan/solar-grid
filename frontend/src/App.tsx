@@ -6,11 +6,11 @@ import { LoginPage } from './pages/LoginPage';
 import { ServicesProvider, type Services } from './services/services-context';
 
 // The charts are most of the JavaScript; the sign-in page does not wait for them.
-const DashboardPage = lazy(() =>
-  import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
+const ControlCenter = lazy(() =>
+  import('./app/ControlCenter').then((module) => ({ default: module.ControlCenter })),
 );
 
-/** Signed in: the dashboard. Otherwise: the sign-in page. Nothing in between. */
+/** Signed in: the control center. Otherwise: the sign-in page. Nothing in between. */
 function Gate() {
   const { isSignedIn } = useAuth();
   if (!isSignedIn) return <LoginPage />;
@@ -18,11 +18,11 @@ function Gate() {
     <Suspense
       fallback={
         <p role="status" className="p-8 text-sm text-ink-3">
-          Loading the dashboard…
+          Loading the control center…
         </p>
       }
     >
-      <DashboardPage />
+      <ControlCenter />
     </Suspense>
   );
 }

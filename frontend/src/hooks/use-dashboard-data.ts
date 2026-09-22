@@ -1,6 +1,7 @@
 import { useServices } from '../services/services-context';
 import type {
   BillingSummary,
+  BillingTrendBucket,
   CurrentPrice,
   EnergySummary,
   EnergyTrendBucket,
@@ -31,6 +32,7 @@ export interface PriceSection {
 
 export interface BillingSection {
   summary: BillingSummary;
+  trend: Trend<BillingTrendBucket>;
 }
 
 export interface DashboardData {
@@ -83,8 +85,11 @@ export function useDashboardData(timeWindow: TimeWindow, refreshToken: number): 
   });
 
   const billing = useResource(key, refreshToken, async (signal) => {
-    const summary = await api.billingSummary(stats, signal);
-    return { summary: summary.data };
+    const [summary, trend] = await Promise.all([
+      api.billingSummary(stats, signal),
+      api.billingTrend(stats, timeWindow.bucket, signal),
+    ]);
+    return { summary: summary.data, trend: trend.data };
   });
 
   const sections = [energy, market, prices, billing];

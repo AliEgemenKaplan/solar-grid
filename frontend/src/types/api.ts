@@ -241,3 +241,47 @@ export interface ApiErrorBody {
   path: string;
   details?: string[];
 }
+
+// --- diagnostics ---------------------------------------------------------------
+
+/** One series of a service counter. For a histogram, `value` is the count and `sum` the total. */
+export interface DiagnosticSeries {
+  labels: Record<string, string>;
+  value: number;
+  sum?: number;
+}
+
+export interface DiagnosticMetric {
+  name: string;
+  help: string;
+  type: 'counter' | 'gauge' | 'histogram';
+  series: DiagnosticSeries[];
+}
+
+/** GET /diagnostics, operator only: a service's own counters since it started. */
+export interface DiagnosticsSnapshot {
+  service: string;
+  countingSince: Instant;
+  generatedAt: Instant;
+  metrics: DiagnosticMetric[];
+}
+
+// --- single household, public ------------------------------------------------
+
+/** GET /households/:id/status on smart-meter: the household's latest reading. */
+export interface HouseholdStatus {
+  householdId: string;
+  currentStatus: 'SURPLUS' | 'DEMAND' | 'BALANCED';
+  currentSurplusKwh: Decimal;
+  currentDemandKwh: Decimal;
+  lastReadingAt: Instant;
+  updatedAt: Instant;
+}
+
+/** GET /balances/:id on billing: zero with no update time when it never traded. */
+export interface HouseholdBalance {
+  householdId: string;
+  balance: Decimal;
+  currency: string;
+  updatedAt: Instant | null;
+}

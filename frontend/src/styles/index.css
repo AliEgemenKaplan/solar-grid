@@ -34,6 +34,9 @@
   --color-traded: #9085e9;
   --color-volume: #d55181;
   --color-price: #c98500;
+  /* Net energy below zero. Paired with the net colour only where position
+     (above or below the zero line) already says which is which. */
+  --color-deficit: #e66767;
 
   --color-good: #0ca30c;
   --color-warning: #fab219;

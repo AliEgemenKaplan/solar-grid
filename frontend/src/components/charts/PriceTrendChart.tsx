@@ -31,29 +31,32 @@ import {
   LINE,
   SERIES,
   sparseDots,
+  unitLabel,
 } from './chart-theme';
-
-const HEIGHT = 220;
 
 /**
  * The calculated price per bucket: the average as a line, the lowest to
- * highest as a bar behind it, and the pricing rule's floor and cap as rules,
+ * highest as a bar behind it, and the pricing rule's floor and ceiling as rules,
  * so a price can be read against the limits it is clamped to. A bucket where
  * nothing was priced is a gap, not a zero.
  */
 export const PriceTrendChart = memo(function PriceTrendChart({
   trend,
   band,
+  syncId,
+  height = 280,
 }: {
   trend: Trend<PriceTrendBucket>;
   band: PricingBand | null;
+  syncId?: string;
+  height?: number;
 }) {
   const rows = useMemo(() => priceRows(trend), [trend]);
   const currency = band?.currency ?? 'TRY';
 
   if (!hasActivity(rows, (bucket) => bucket.snapshots > 0)) {
     return (
-      <EmptyState title="No price was calculated in this window.">
+      <EmptyState title="No price was calculated in this period.">
         The price is recalculated from neighbourhood supply and demand.
       </EmptyState>
     );
@@ -70,7 +73,7 @@ export const PriceTrendChart = memo(function PriceTrendChart({
         { label: 'Average', color: SERIES.price, shape: 'line' },
         { label: 'Lowest to highest', color: SERIES.price, shape: 'band' },
         ...(band
-          ? [{ label: 'Band floor and cap', color: 'var(--color-ink-3)', shape: 'line' as const }]
+          ? [{ label: 'Floor and ceiling', color: 'var(--color-ink-3)', shape: 'line' as const }]
           : []),
       ]}
       columns={[
@@ -88,13 +91,9 @@ export const PriceTrendChart = memo(function PriceTrendChart({
         groupDigits(row.source.maxPricePerKwh),
       ])}
     >
-      <div style={{ height: HEIGHT }}>
-        <ResponsiveContainer
-          width="100%"
-          height={HEIGHT}
-          initialDimension={{ width: 640, height: HEIGHT }}
-        >
-          <ComposedChart data={rows} margin={CHART_MARGIN} title="Price over time">
+      <div style={{ height: height }}>
+        <ResponsiveContainer width="100%" height={height} initialDimension={{ width: 720, height }}>
+          <ComposedChart data={rows} margin={CHART_MARGIN} syncId={syncId} title="Price over time">
             <CartesianGrid stroke={CHROME.grid} vertical={false} />
             <XAxis
               dataKey="t"
@@ -102,7 +101,7 @@ export const PriceTrendChart = memo(function PriceTrendChart({
               tick={AXIS_TICK}
               stroke={CHROME.axis}
               tickLine={false}
-              minTickGap={28}
+              minTickGap={32}
             />
             <YAxis
               tick={AXIS_TICK}
@@ -112,6 +111,7 @@ export const PriceTrendChart = memo(function PriceTrendChart({
               width={56}
               tickFormatter={formatAxisNumber}
               domain={['auto', 'auto']}
+              label={unitLabel(`${currency}/kWh`)}
             />
             {floor !== null ? (
               <ReferenceLine
@@ -123,7 +123,7 @@ export const PriceTrendChart = memo(function PriceTrendChart({
                   value: `Floor ${band?.minPrice}`,
                   position: 'insideBottomRight',
                   fill: CHROME.tick,
-                  fontSize: 10,
+                  fontSize: 12,
                 }}
               />
             ) : null}
@@ -134,10 +134,10 @@ export const PriceTrendChart = memo(function PriceTrendChart({
                 strokeOpacity={0.5}
                 ifOverflow="extendDomain"
                 label={{
-                  value: `Cap ${band?.maxPrice}`,
+                  value: `Ceiling ${band?.maxPrice}`,
                   position: 'insideTopRight',
                   fill: CHROME.tick,
-                  fontSize: 10,
+                  fontSize: 12,
                 }}
               />
             ) : null}

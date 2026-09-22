@@ -1,50 +1,9 @@
-import { useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import type { ApiError } from '../../services/api-error';
 import { CheckIcon, ErrorIcon, InfoIcon, WarningIcon } from './icons';
 
 export function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ');
-}
-
-/**
- * A titled region of the dashboard. The heading names the region for screen
- * readers, and `refreshing` dims the content while newer data is on its way
- * rather than replacing it with a skeleton.
- */
-export function Panel({
-  title,
-  subtitle,
-  actions,
-  refreshing = false,
-  className,
-  children,
-}: {
-  title: string;
-  subtitle?: ReactNode;
-  actions?: ReactNode;
-  refreshing?: boolean;
-  className?: string;
-  children: ReactNode;
-}) {
-  const headingId = useId();
-  return (
-    <section
-      aria-labelledby={headingId}
-      aria-busy={refreshing || undefined}
-      className={cx('min-w-0 rounded-lg border border-line bg-surface', className)}
-    >
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <h2 id={headingId} className="text-[13px] font-semibold tracking-wide text-ink">
-            {title}
-          </h2>
-          {subtitle ? <p className="mt-0.5 text-xs text-ink-3">{subtitle}</p> : null}
-        </div>
-        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
-      </header>
-      <div className={cx('p-4 transition-opacity', refreshing && 'opacity-60')}>{children}</div>
-    </section>
-  );
 }
 
 export type Tone = 'good' | 'warning' | 'critical' | 'neutral';
@@ -159,29 +118,5 @@ export function Button({
       )}
       {...props}
     />
-  );
-}
-
-/** A label and a value, for small facts inside a panel. */
-export function Fact({
-  label,
-  value,
-  unit,
-  hint,
-}: {
-  label: string;
-  value: ReactNode;
-  unit?: string;
-  hint?: ReactNode;
-}) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-ink-3">{label}</dt>
-      <dd className="mt-0.5 text-[15px] font-semibold text-ink">
-        {value}
-        {unit ? <span className="ml-1 text-xs font-normal text-ink-3">{unit}</span> : null}
-      </dd>
-      {hint ? <dd className="mt-0.5 text-xs text-ink-3">{hint}</dd> : null}
-    </div>
   );
 }

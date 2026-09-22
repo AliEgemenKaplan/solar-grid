@@ -104,3 +104,15 @@ export const BUCKET_LABELS: Record<TimeBucket, string> = {
   day: 'daily',
   week: 'weekly',
 };
+
+/** "Last 24 hours", or "1 Sep – 3 Sep 2026" for a custom window: what every figure covers. */
+export function periodLabel(timeWindow: TimeWindow): string {
+  const preset = PRESETS.find((candidate) => candidate.id === timeWindow.preset);
+  if (preset) return preset.long;
+  const lastDay = new Date(timeWindow.to.getTime() - 1);
+  const day = (date: Date) =>
+    `${String(date.getUTCDate()).padStart(2, '0')} ${MONTHS[date.getUTCMonth()]}`;
+  return `${day(timeWindow.from)} – ${day(lastDay)} ${lastDay.getUTCFullYear()}`;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

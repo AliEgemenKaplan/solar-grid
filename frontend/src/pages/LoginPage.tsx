@@ -55,7 +55,7 @@ export function LoginPage() {
           <div>
             <h1 className="text-lg font-semibold tracking-tight text-ink">SolarGrid</h1>
             <p className="text-xs text-ink-3">
-              Energy Trading &amp; Distributed Grid · Operator console
+              Energy Trading &amp; Distributed Grid · Operator control center
             </p>
           </div>
         </div>

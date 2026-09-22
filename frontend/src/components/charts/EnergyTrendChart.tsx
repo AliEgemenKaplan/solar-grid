@@ -1,9 +1,10 @@
 import { memo, useMemo } from 'react';
 import {
   Area,
+  Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
-  Line,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -11,7 +12,14 @@ import {
   YAxis,
 } from 'recharts';
 import type { EnergyTrendBucket, Trend } from '../../types/api';
-import { formatBucketPeriod, formatBucketTick, formatCount, groupDigits } from '../../utils/format';
+import {
+  formatBucketPeriod,
+  formatBucketTick,
+  formatCount,
+  groupDigits,
+  isNegative,
+  isZero,
+} from '../../utils/format';
 import { energyRows, hasActivity, type EnergyRow } from '../../utils/series';
 import { EmptyState } from '../ui/primitives';
 import { ChartFrame } from './ChartFrame';
@@ -24,87 +32,88 @@ import {
   formatAxisNumber,
   LINE,
   SERIES,
+  unitLabel,
 } from './chart-theme';
 
-const HEIGHT = 260;
+function xAxis(trend: Trend<EnergyTrendBucket>) {
+  return (
+    <XAxis
+      dataKey="t"
+      tickFormatter={(value: string) => formatBucketTick(value, trend.bucket)}
+      tick={AXIS_TICK}
+      stroke={CHROME.axis}
+      tickLine={false}
+      minTickGap={32}
+    />
+  );
+}
+
+function yAxis() {
+  return (
+    <YAxis
+      tick={AXIS_TICK}
+      stroke={CHROME.axis}
+      tickLine={false}
+      axisLine={false}
+      width={60}
+      tickFormatter={formatAxisNumber}
+      label={unitLabel('kWh')}
+    />
+  );
+}
 
 /**
- * Production, consumption and their difference over the window. Production
- * and consumption carry a light wash so the gap between them reads as the
- * surplus or deficit; net is a line around a zero rule, since it goes
- * negative whenever the neighbourhood uses more than it makes.
+ * How much the meters recorded being generated and used, per bucket. Two
+ * washes on one axis, because both are energy in kWh; where they part is
+ * where the neighbourhood had spare energy or needed more.
  */
 export const EnergyTrendChart = memo(function EnergyTrendChart({
   trend,
+  height = 320,
 }: {
   trend: Trend<EnergyTrendBucket>;
+  height?: number;
 }) {
   const rows = useMemo(() => energyRows(trend), [trend]);
 
   if (!hasActivity(rows, (bucket) => bucket.readings > 0)) {
     return (
-      <EmptyState title="No meter readings in this window.">
-        Readings appear here as meters report. Try a longer window.
+      <EmptyState title="No meter readings in this period.">
+        Readings appear here as household meters report. Try a longer period.
       </EmptyState>
     );
   }
 
   return (
     <ChartFrame
-      label="Energy over time"
+      label="Energy produced and used over time"
       legend={[
-        { label: 'Production', color: SERIES.production, shape: 'area' },
-        { label: 'Consumption', color: SERIES.consumption, shape: 'area' },
-        { label: 'Net', color: SERIES.net, shape: 'line' },
+        { label: 'Produced', color: SERIES.production, shape: 'area' },
+        { label: 'Used', color: SERIES.consumption, shape: 'area' },
       ]}
       columns={[
         { header: 'Period' },
         { header: 'Readings', align: 'right' },
-        { header: 'Production (kWh)', align: 'right' },
-        { header: 'Consumption (kWh)', align: 'right' },
-        { header: 'Net (kWh)', align: 'right' },
+        { header: 'Produced (kWh)', align: 'right' },
+        { header: 'Used (kWh)', align: 'right' },
       ]}
       rows={rows.map((row) => [
         formatBucketPeriod(row.t, row.bucket),
         formatCount(row.source.readings),
         groupDigits(row.source.productionKwh),
         groupDigits(row.source.consumptionKwh),
-        groupDigits(row.source.netKwh),
       ])}
     >
-      <div style={{ height: HEIGHT }}>
-        <ResponsiveContainer
-          width="100%"
-          height={HEIGHT}
-          initialDimension={{ width: 640, height: HEIGHT }}
-        >
-          <ComposedChart data={rows} margin={CHART_MARGIN} title="Energy over time">
+      <div style={{ height }}>
+        <ResponsiveContainer width="100%" height={height} initialDimension={{ width: 720, height }}>
+          <ComposedChart
+            data={rows}
+            margin={CHART_MARGIN}
+            title="Energy produced and used over time"
+          >
             <CartesianGrid stroke={CHROME.grid} vertical={false} />
-            <XAxis
-              dataKey="t"
-              tickFormatter={(value: string) => formatBucketTick(value, trend.bucket)}
-              tick={AXIS_TICK}
-              stroke={CHROME.axis}
-              tickLine={false}
-              minTickGap={28}
-            />
-            <YAxis
-              tick={AXIS_TICK}
-              stroke={CHROME.axis}
-              tickLine={false}
-              axisLine={false}
-              width={56}
-              tickFormatter={formatAxisNumber}
-              label={{
-                value: 'kWh',
-                position: 'insideTopLeft',
-                dy: -8,
-                dx: 8,
-                fill: CHROME.tick,
-                fontSize: 11,
-              }}
-            />
-            <ReferenceLine y={0} stroke={CHROME.axis} />
+            {xAxis(trend)}
+            {yAxis()}
             <Tooltip
               cursor={{ stroke: CHROME.crosshair, strokeWidth: 1 }}
               content={({ active, payload }) => {
@@ -118,21 +127,15 @@ export const EnergyTrendChart = memo(function EnergyTrendChart({
                       row
                         ? [
                             {
-                              label: 'Production',
+                              label: 'Produced',
                               color: SERIES.production,
                               value: groupDigits(row.source.productionKwh),
                               unit: 'kWh',
                             },
                             {
-                              label: 'Consumption',
+                              label: 'Used',
                               color: SERIES.consumption,
                               value: groupDigits(row.source.consumptionKwh),
-                              unit: 'kWh',
-                            },
-                            {
-                              label: 'Net',
-                              color: SERIES.net,
-                              value: groupDigits(row.source.netKwh),
                               unit: 'kWh',
                             },
                             { label: 'Readings', value: formatCount(row.source.readings) },
@@ -146,7 +149,7 @@ export const EnergyTrendChart = memo(function EnergyTrendChart({
             <Area
               type="linear"
               dataKey="production"
-              name="Production"
+              name="Produced"
               stroke={SERIES.production}
               fill={SERIES.production}
               fillOpacity={0.1}
@@ -157,7 +160,7 @@ export const EnergyTrendChart = memo(function EnergyTrendChart({
             <Area
               type="linear"
               dataKey="consumption"
-              name="Consumption"
+              name="Used"
               stroke={SERIES.consumption}
               fill={SERIES.consumption}
               fillOpacity={0.1}
@@ -165,15 +168,107 @@ export const EnergyTrendChart = memo(function EnergyTrendChart({
               dot={false}
               {...LINE}
             />
-            <Line
-              type="linear"
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </ChartFrame>
+  );
+});
+
+/**
+ * Produced minus used, per bucket, as bars from a zero line: above it the
+ * neighbourhood made more than it used, below it used more than it made. The
+ * position says which; the colour and the legend say it again.
+ */
+export const NetEnergyChart = memo(function NetEnergyChart({
+  trend,
+  height = 240,
+}: {
+  trend: Trend<EnergyTrendBucket>;
+  height?: number;
+}) {
+  const rows = useMemo(() => energyRows(trend), [trend]);
+
+  if (!hasActivity(rows, (bucket) => bucket.readings > 0)) {
+    return <EmptyState title="No meter readings in this period." />;
+  }
+  // Bars of height zero would look like a chart with nothing on it.
+  if (!hasActivity(rows, (bucket) => bucket.readings > 0 && !isZero(bucket.netKwh))) {
+    return (
+      <EmptyState title={`Net energy was 0 kWh in every ${trend.bucket} with readings.`}>
+        Whenever meters reported, the households together used exactly as much energy as they
+        produced.
+      </EmptyState>
+    );
+  }
+
+  return (
+    <ChartFrame
+      label="Net energy over time"
+      legend={[
+        { label: 'More produced than used', color: SERIES.net, shape: 'bar' },
+        { label: 'More used than produced', color: SERIES.deficit, shape: 'bar' },
+      ]}
+      columns={[
+        { header: 'Period' },
+        { header: 'Net (kWh)', align: 'right' },
+        { header: 'Meaning' },
+      ]}
+      rows={rows.map((row) => [
+        formatBucketPeriod(row.t, row.bucket),
+        groupDigits(row.source.netKwh),
+        row.source.readings === 0
+          ? 'No readings'
+          : isNegative(row.source.netKwh)
+            ? 'More used than produced'
+            : 'More produced than used',
+      ])}
+    >
+      <div style={{ height }}>
+        <ResponsiveContainer width="100%" height={height} initialDimension={{ width: 720, height }}>
+          <ComposedChart data={rows} margin={CHART_MARGIN} title="Net energy over time">
+            <CartesianGrid stroke={CHROME.grid} vertical={false} />
+            {xAxis(trend)}
+            {yAxis()}
+            <ReferenceLine y={0} stroke={CHROME.tick} strokeOpacity={0.6} />
+            <Tooltip
+              cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+              content={({ active, payload }) => {
+                const row = payload?.[0]?.payload as EnergyRow | undefined;
+                return (
+                  <ChartTooltip
+                    active={active}
+                    bucketStart={row?.t}
+                    bucket={trend.bucket}
+                    lines={
+                      row
+                        ? [
+                            {
+                              label: isNegative(row.source.netKwh)
+                                ? 'More used than produced'
+                                : 'Net',
+                              color: isNegative(row.source.netKwh) ? SERIES.deficit : SERIES.net,
+                              value: groupDigits(row.source.netKwh),
+                              unit: 'kWh',
+                            },
+                          ]
+                        : []
+                    }
+                  />
+                );
+              }}
+            />
+            <Bar
               dataKey="net"
               name="Net"
-              stroke={SERIES.net}
-              activeDot={activeDot(SERIES.net)}
-              dot={false}
-              {...LINE}
-            />
+              maxBarSize={24}
+              radius={[3, 3, 3, 3]}
+              isAnimationActive={false}
+            >
+              {rows.map((row) => (
+                <Cell key={row.t} fill={row.net < 0 ? SERIES.deficit : SERIES.net} />
+              ))}
+            </Bar>
           </ComposedChart>
         </ResponsiveContainer>
       </div>
