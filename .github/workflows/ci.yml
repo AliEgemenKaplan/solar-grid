@@ -1,0 +1,80 @@
+# The checks that must pass before a change lands.
+#
+# Two jobs. `verify` is everything that needs no services: formatting, lint,
+# types, unit tests and a production build. `integration` is the suites that
+# start a real PostgreSQL and a real RabbitMQ through Testcontainers, which
+# needs the Docker daemon the GitHub-hosted Ubuntu runners already provide.
+# They run in parallel; both must pass.
+#
+# Node comes from .nvmrc and pnpm from the `packageManager` field in
+# package.json, so CI and a developer's machine run the same versions.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the previous run redundant.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Format, lint, types, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Before setup-node: its pnpm cache needs pnpm on PATH to find the store.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The Prisma client is generated, not committed, and the services and
+      # their tests import it. Types and the build fail without this.
+      - run: pnpm prisma:generate
+
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  integration:
+    name: Integration tests (Testcontainers)
+    runs-on: ubuntu-latest
+    # Each suite starts and stops real containers, some of them twice to check
+    # an outage is survived, so this is slower than the unit suites.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma:generate
+
+      - name: Confirm the Docker daemon is available
+        run: docker version
+
+      # Real PostgreSQL and RabbitMQ containers, not mocks. A failure here
+      # fails the job: the step is not allowed to continue on error.
+      - run: pnpm test:integration

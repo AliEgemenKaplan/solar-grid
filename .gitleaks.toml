@@ -1,0 +1,42 @@
+# gitleaks configuration for Solar Grid.
+#
+# The default rule set is used in full; nothing is disabled. The entries below
+# allow three exact literal strings that the default `generic-api-key` and
+# `curl-auth-header` rules flag, and that are demonstrably not credentials.
+# Each is allowed by its exact value, so a real secret appearing in the same
+# file is still reported.
+#
+# Run the same scan locally with:
+#   gitleaks git . --no-banner --redact
+
+title = "Solar Grid"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+The example idempotency key printed in the API and observability documentation.
+It is the documented shape of a trade idempotency key, not a credential, and it
+appears only in fenced example payloads.
+"""
+regexes = ['''TRD-5F1A2B3C4D5E''']
+
+[[allowlists]]
+description = """
+The fixture in the structured logger's redaction test. That test configures
+this value as a secret and then asserts it never reaches the log output, so it
+is the test that proves secrets are stripped. Removing it would delete the
+check, not a leak.
+"""
+paths = ['''packages/nest-common/test/structured-logger\.spec\.ts''']
+regexes = ['''f3c9a1b27d5e4c6a8b0d1e2f3a4b5c6d''']
+
+[[allowlists]]
+description = """
+A placeholder bearer token that earlier revisions of the README used in a curl
+example. The current README reads the token from infrastructure/.env instead,
+but the string is still reachable in history, so the history scan needs it
+allowed. The value says what it is.
+"""
+regexes = ['''dev-operator-token-not-for-production''']

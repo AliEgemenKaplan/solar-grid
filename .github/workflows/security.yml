@@ -1,0 +1,94 @@
+# Repository security checks: what ships, and what is committed.
+#
+# `dependencies` gates on the packages that actually reach the runtime images.
+# `secrets` scans the working tree and the whole commit history for
+# credential patterns.
+#
+# CodeQL static analysis lives in its own workflow (codeql.yml) because it
+# uses a different trigger schedule.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Advisories are published against code that has not changed, so re-run
+    # weekly rather than only on a push. Mondays, 05:17 UTC.
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The gate. These are the dependencies that end up in the service images,
+      # so any advisory against them fails the build at any severity.
+      - name: Production dependencies (blocking)
+        run: pnpm audit --prod --audit-level=low
+
+      # Everything else is build and test tooling - jest, babel, eslint and
+      # their transitive packages - which never reaches a running service.
+      # Reported for visibility; it does not gate, because the fix belongs to
+      # an upstream release rather than to this repository. Advisories that
+      # can be resolved from here are pinned in pnpm-workspace.yaml `overrides`.
+      - name: All dependencies, including dev tooling (report only)
+        continue-on-error: true
+        run: pnpm audit
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # gitleaks scans every commit, so it needs more than the tip.
+          fetch-depth: 0
+
+      # The gitleaks binary rather than gitleaks-action: the binary is MIT
+      # licensed, the action is not, and pinning an exact release keeps the
+      # result reproducible. This is also the command a developer can run
+      # locally, unchanged.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # Uses .gitleaks.toml at the repository root: the full default rule set,
+      # plus three exact literal strings allowed by value (a documented example
+      # idempotency key, the fixture in the logger's redaction test, and a
+      # placeholder token an older README used). Each is allowed by its exact
+      # value, so a real secret in the same file is still reported.
+      #
+      # Both the checked-out tree and every commit are scanned: a secret that
+      # was committed and later deleted is still a leaked secret.
+      - name: Scan the working tree
+        run: gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose
+
+      - name: Scan the full commit history
+        run: gitleaks git . --config .gitleaks.toml --no-banner --redact --verbose

@@ -1,5 +1,9 @@
 # Solar Grid
 
+[![CI](https://github.com/AliEgemenKaplan/solar-grid/actions/workflows/ci.yml/badge.svg)](https://github.com/AliEgemenKaplan/solar-grid/actions/workflows/ci.yml)
+[![Security](https://github.com/AliEgemenKaplan/solar-grid/actions/workflows/security.yml/badge.svg)](https://github.com/AliEgemenKaplan/solar-grid/actions/workflows/security.yml)
+[![CodeQL](https://github.com/AliEgemenKaplan/solar-grid/actions/workflows/codeql.yml/badge.svg)](https://github.com/AliEgemenKaplan/solar-grid/actions/workflows/codeql.yml)
+
 Solar Grid is a CENG442 microservice architecture project for neighborhood-level peer-to-peer renewable energy trading. Households with surplus solar production can sell energy to households with demand.
 
 ## Screenshots
@@ -296,6 +300,38 @@ pnpm --filter @solar-grid/dashboard test   # the dashboard on its own
   recovered from.
 
 Docker is required for the integration suites and for both scripts.
+
+## Continuous Integration
+
+Every push and pull request to `main` runs three workflows, in
+[`.github/workflows/`](.github/workflows):
+
+| Workflow     | What it runs                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CI**       | `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`; and, as a second job, `pnpm test:integration` against the PostgreSQL and RabbitMQ containers Testcontainers starts |
+| **Security** | `pnpm audit` over production dependencies as a gate, the full audit as a report, and a gitleaks scan of the tree and every commit                                                                 |
+| **CodeQL**   | GitHub's static analysis over the TypeScript, with the `security-extended` query set                                                                                                              |
+
+Security and CodeQL also run weekly, because advisories are published and
+queries improve without the code changing. Dependabot opens grouped weekly pull
+requests for npm and Actions updates.
+
+Two things are worth stating exactly, since both involve a deliberate exception:
+
+- **The dependency gate covers production dependencies only.** `pnpm audit --prod`
+  must come back clean. The advisories that remain are all in build and test
+  tooling - jest, babel, eslint and packages they pull in - which is never part
+  of a runtime image; those are reported, not gated, because the fix belongs to
+  an upstream release. Where one can be pinned from here it is, in
+  `pnpm-workspace.yaml` under `overrides`.
+- **The secret scan allows three exact strings**, listed with their reasons in
+  [`.gitleaks.toml`](.gitleaks.toml): an example idempotency key printed in the
+  API documentation, the fixture in the logger's redaction test (the test that
+  proves secrets are stripped from log output), and a placeholder token an
+  earlier README used in a curl example. Each is allowed by its exact value, so
+  a real secret in any of those files is still reported.
+
+There is no coverage gate and no published coverage figure.
 
 ## Local Port Conflicts
 
