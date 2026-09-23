@@ -177,6 +177,22 @@ sentences of explanation.
 | Households    | Who produces, uses, sells and buys?             | households seen by each service; highest trading volume and largest producers; searchable, paged lists; a detail panel per household                                             |
 | System health | Is every service working, and what is it doing? | each service's state, purpose, response time and dependencies; the path of a meter event; operations; engineering diagnostics; what is deliberately not shown                    |
 
+### What each page looks like
+
+Captured from a local stack fed a week of generated meter readings; the
+household identifiers are demo data, not real ones.
+
+| Page             | Screenshot                                               |
+| ---------------- | -------------------------------------------------------- |
+| Overview         | [overview.png](screenshots/overview.png)                 |
+| Energy           | [energy.png](screenshots/energy.png)                     |
+| Market           | [market.png](screenshots/market.png)                     |
+| Trading          | [trading.png](screenshots/trading.png)                   |
+| Billing          | [billing.png](screenshots/billing.png)                   |
+| Households       | [households.png](screenshots/households.png)             |
+| Household detail | [household-detail.png](screenshots/household-detail.png) |
+| System health    | [system-health.png](screenshots/system-health.png)       |
+
 ### What needs attention
 
 The overview and the system page list what is wrong or waiting, most serious

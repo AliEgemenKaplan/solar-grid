@@ -22,7 +22,10 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 ## Port Override Mode
 
 If a default port collides with another stack, change it in
-`infrastructure/.env`; there is no separate override compose file.
+`infrastructure/.env`; the published ports are not overridden by a second
+compose file. (`infrastructure/docker-compose.dev-ports.yml` exists for a
+different purpose: it publishes the databases so a service can run on the host
+against them.)
 
 ```bash
 pnpm env:init   # if infrastructure/.env does not exist yet

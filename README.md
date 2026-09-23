@@ -2,6 +2,29 @@
 
 Solar Grid is a CENG442 microservice architecture project for neighborhood-level peer-to-peer renewable energy trading. Households with surplus solar production can sell energy to households with demand.
 
+## Screenshots
+
+The operator control center, reading the four services' statistics, diagnostics
+and readiness endpoints from the browser. Every figure below is what the
+services reported for a week of generated meter readings on a local stack; the
+households are demo identifiers, not real ones.
+
+![Overview: system status, the grid in four figures, and what needs attention](docs/screenshots/overview.png)
+
+| Energy                                                                                                               | Market                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [![Energy: production, consumption and surplus over time](docs/screenshots/energy.png)](docs/screenshots/energy.png) | [![Market: the price between its floor and ceiling](docs/screenshots/market.png)](docs/screenshots/market.png) |
+
+| Trading                                                                                                                 | System health                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [![Trading: how every trade ended, and the matching queue](docs/screenshots/trading.png)](docs/screenshots/trading.png) | [![System health: every service, its dependencies and its own counters](docs/screenshots/system-health.png)](docs/screenshots/system-health.png) |
+
+A household's detail panel, opened from the Households page:
+
+![Household detail: readings, trades, ledger entries and balance for one household](docs/screenshots/household-detail.png)
+
+`docs/screenshots/` also holds the Billing and Households pages in full.
+
 ## Services
 
 | Service                | Port         | Responsibility                                                                                       |
@@ -246,6 +269,34 @@ PowerShell demo:
 powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 ```
 
+## Tests
+
+```bash
+pnpm test               # every unit suite, and the dashboard's
+pnpm test:integration   # the Testcontainers suites, which `pnpm test` leaves out
+pnpm --filter @solar-grid/dashboard test   # the dashboard on its own
+```
+
+- **Unit tests** cover the matching planner, the pricing formula, decimal
+  handling, the outbox publisher, the event consumer, graceful shutdown, and
+  the shared HTTP layer (auth, the error filter, rate limits, readiness, and
+  the log redaction that keeps tokens and passwords out of the output).
+- **Integration tests** run against a real PostgreSQL and a real RabbitMQ
+  started by Testcontainers, not mocks. They stop and restart those containers
+  mid-test to check that an outage is survived, that a duplicate delivery does
+  not create a second trade or ledger entry, that the paged endpoints refuse an
+  oversized page, and that the runtime database role really cannot touch what
+  it has no grant for.
+- **Dashboard tests** use Vitest and Testing Library against the real page
+  components, with axe-core asserting no accessibility violations.
+- **End-to-end**: `scripts/demo.sh` (or `scripts/demo.ps1`) drives the running
+  Docker stack from a meter reading to a settled ledger entry and checks each
+  step. `scripts/resilience.sh` stops and starts real containers and checks that
+  each outage is reported, survived without losing or duplicating money, and
+  recovered from.
+
+Docker is required for the integration suites and for both scripts.
+
 ## Local Port Conflicts
 
 Every published port binds to `127.0.0.1` and can be remapped without editing
@@ -333,6 +384,7 @@ SolarGrid/
     pricing-engine-service/
     trade-matching-service/
     billing-ledger-service/
+  frontend/               # the operator control center (React, Vite, nginx)
   packages/
     shared-contracts/     # event and DTO types shared between services
     shared-utils/         # decimals, ids, correlation ids
@@ -342,13 +394,45 @@ SolarGrid/
     .env.example
     postgres/create-app-role.sh   # the least-privileged runtime role
   docs/
+    screenshots/          # the dashboard images used in this README
   scripts/
     demo.sh
     demo.ps1
+    resilience.sh
   package.json
   pnpm-lock.yaml
   pnpm-workspace.yaml
 ```
+
+## Known Limitations
+
+This is a course project built to demonstrate a microservice architecture, and
+it is scoped accordingly:
+
+- **Single node everywhere.** One RabbitMQ broker and one PostgreSQL instance
+  per service, with no clustering, replication or backups. A lost volume is
+  lost data.
+- **No transport security.** Services speak plain HTTP and are published only
+  on `127.0.0.1`. Anything beyond a local machine would need TLS in front.
+- **Shared tokens, not users.** Authorisation is three static bearer tokens for
+  three roles, read from the environment. There is no per-user identity, no
+  session lifetime and no rotation mechanism; households are identifiers, not
+  accounts.
+- **No money actually moves.** The ledger records what each household owes or
+  is owed. There is no payment provider, settlement or dispute handling.
+- **The price is a formula, not a market.** A supply/demand ratio clamped
+  between a floor and a ceiling, recalculated on demand - not an order book or
+  an auction.
+- **Matching is serialised.** One matching run at a time, guarded by a database
+  lock, and FIFO rather than price-ranked. It is correct under concurrency, not
+  optimised for throughput; no load testing has been done.
+- **The dashboard polls.** It re-reads the statistics endpoints on an interval.
+  There is no streaming, and no server-side aggregation or caching layer.
+- **Observability stops at the endpoints.** Logs are structured and `/metrics`
+  is Prometheus text, but the stack ships no Prometheus, Grafana or tracing
+  backend; correlation ids are followed with `grep`.
+- **No CI pipeline or deployment manifests.** The checks above are run locally;
+  there is nothing beyond Docker Compose for running this anywhere else.
 
 ## Documentation
 
@@ -372,16 +456,3 @@ SolarGrid/
 | Name              | Contribution                                                                                   |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
 | Ali Egemen Kaplan | project setup, infrastructure, Smart Meter Service, Pricing Engine Service, validation support |
-
-## Report Evidence Checklist
-
-For the final implementation report, capture:
-
-- `pnpm build` output
-- `pnpm test` output
-- Docker Compose running containers
-- `/health` responses for all services
-- Demo script final PASS summary
-- RabbitMQ queues/exchange screenshot
-- Swagger screenshots for the four services
-- Ledger/balance responses after a completed demo trade
