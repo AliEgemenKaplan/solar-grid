@@ -456,3 +456,7 @@ it is scoped accordingly:
 | Name              | Contribution                                                                                   |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
 | Ali Egemen Kaplan | project setup, infrastructure, Smart Meter Service, Pricing Engine Service, validation support |
+
+## License
+
+[MIT](LICENSE).
