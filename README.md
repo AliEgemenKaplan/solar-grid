@@ -451,7 +451,7 @@ it is scoped accordingly:
 | [docs/reliability.md](docs/reliability.md)         | Idempotency, DLQ behavior, correlation IDs, and health endpoints                  |
 | [docs/demo-script.md](docs/demo-script.md)         | Demo execution and expected checks                                                |
 
-## Team Contributions
+## Author
 
 | Name              | Contribution                                                                                   |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
