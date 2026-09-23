@@ -162,11 +162,11 @@ Prisma WebAssembly engines, no sources, and no npm, npx, corepack or yarn. The
 application files belong to root; the process runs as `node` (uid 1000) and
 cannot change them.
 
-|                          | Before phase 5 | Now       |
-| ------------------------ | -------------- | --------- |
-| Image size (per service) | ~895 MB        | ~360 MB   |
-| `/app`                   | ~340 MB        | ~91-96 MB |
-| User                     | root           | node      |
+|                          | Single stage | Now       |
+| ------------------------ | ------------ | --------- |
+| Image size (per service) | ~895 MB      | ~360 MB   |
+| `/app`                   | ~340 MB      | ~91-96 MB |
+| User                     | root         | node      |
 
 The pnpm store is a BuildKit cache mount shared by every build, so a package is
 downloaded once per machine rather than once per image, and never ends up in a

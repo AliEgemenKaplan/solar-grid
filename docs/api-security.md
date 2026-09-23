@@ -131,7 +131,7 @@ the documentation cannot disagree with the check.
 Meter readings and pricing aggregates remain JSON numbers (they come from
 instruments), with `maxDecimalPlaces`, bounds, and NaN and Infinity refused.
 
-The database constraints from phase 2 still apply; validation refuses the same
+The database constraints still apply; validation refuses the same
 things earlier, with a message that names the field.
 
 ## Error responses
@@ -184,7 +184,7 @@ a 422.
 fetched before any energy is reserved, so nothing is left half done and the run
 can be retried. If billing does not answer, the run still returns 200: trades
 are reserved as `PENDING_BILLING` and settled on a later run, which is the
-phase 1 reserve, bill, confirm flow working as designed.
+reserve, bill, confirm flow working as designed.
 
 ## Idempotency conflicts
 
